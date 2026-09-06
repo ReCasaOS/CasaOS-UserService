@@ -436,3 +436,51 @@ func TestVerifyOutsideLoginLimiter(t *testing.T) {
 	c.expect(400, 10015, "POST", "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": pre, "code": wrongCode(t, secret)})
 	tokens(t, c.expect(200, 200, "POST", "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": pre, "code": codeAt(t, secret, time.Now().Add(30*time.Second))}))
 }
+
+// TestSetupAndDisableAreConditional: the two remaining writes are keyed on
+// the row as read. A setup that read a disabled row cannot replace the secret
+// an enable stored since; a disable that verified against one enrolment
+// cannot turn off the next; an enable whose pending secret a login cleared is
+// told there is no pending setup, not that 2FA is already on.
+func TestSetupAndDisableAreConditional(t *testing.T) {
+	users, c := newRig(t)
+	const password = "correct horse"
+	user := users.CreateUser(model2.UserDBModel{Username: "erin", Password: encryption.GetMD5ByStr(password), Role: "admin"})
+	id := strconv.Itoa(user.Id)
+	access, _ := tokens(t, c.expect(200, 200, "POST", "/v1/users/login", "", map[string]string{"username": "erin", "password": password}))
+	first, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": password})["secret"].(string)
+
+	// setup-read (disabled) happened above; enable-write:
+	c.expect(200, 200, "POST", "/v1/users/2fa/enable", access, map[string]string{"code": codeAt(t, first, time.Now())})
+	// setup-write on the stale read must touch nothing.
+	if users.SetPendingTOTP(user.Id, "STALE") {
+		t.Fatal("SetPendingTOTP replaced an enabled secret")
+	}
+	if row := users.GetUserAllInfoById(id); !row.TotpEnabled || row.TotpSecret != first || len(row.RecoveryCodes) != 8 {
+		t.Fatalf("row after the stale setup: enabled=%v secret=%q codes=%d", row.TotpEnabled, row.TotpSecret, len(row.RecoveryCodes))
+	}
+
+	// disable-read against the first enrolment, then a second enrolment:
+	c.expect(200, 200, "POST", "/v1/users/2fa/disable", access, map[string]string{"password": password})
+	second, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": password})["secret"].(string)
+	c.expect(200, 200, "POST", "/v1/users/2fa/enable", access, map[string]string{"code": codeAt(t, second, time.Now())})
+	// disable-write on the stale read must touch nothing; the real one zeroes all four columns.
+	if users.DisableUserTOTP(user.Id, first) {
+		t.Fatal("DisableUserTOTP turned off a later enrolment")
+	}
+	if row := users.GetUserAllInfoById(id); !row.TotpEnabled || row.TotpSecret != second {
+		t.Fatalf("row after the stale disable: enabled=%v secret=%q", row.TotpEnabled, row.TotpSecret)
+	}
+	if !users.DisableUserTOTP(user.Id, second) || users.DisableUserTOTP(user.Id, second) {
+		t.Fatal("DisableUserTOTP must disable the enrolment it was given, once")
+	}
+	if row := users.GetUserAllInfoById(id); row.TotpEnabled || row.TotpSecret != "" || row.TotpLastStep != 0 || len(row.RecoveryCodes) != 0 {
+		t.Fatalf("row after the disable: enabled=%v secret=%q step=%d codes=%d", row.TotpEnabled, row.TotpSecret, row.TotpLastStep, len(row.RecoveryCodes))
+	}
+
+	// A password login clears the pending secret; the enable that follows is
+	// told there is no pending setup (10017), not that 2FA is on (10016).
+	third, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": password})["secret"].(string)
+	tokens(t, c.expect(200, 200, "POST", "/v1/users/login", "", map[string]string{"username": "erin", "password": password}))
+	c.expect(400, 10017, "POST", "/v1/users/2fa/enable", access, map[string]string{"code": codeAt(t, third, time.Now())})
+}

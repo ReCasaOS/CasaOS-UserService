@@ -41,6 +41,8 @@ type UserService interface {
 	UpdateUserTOTP(m model.UserDBModel)
 	EnableUserTOTP(id int, secret string, step int64, hashes []string) bool
 	ClearPendingTOTP(id int, secret string) bool
+	SetPendingTOTP(id int, secret string) bool
+	DisableUserTOTP(id int, secret string) bool
 	ConsumeTOTPStep(id int, step int64) bool
 	UseRecoveryCode(id int, code string) bool
 
@@ -112,6 +114,23 @@ func (u *userService) EnableUserTOTP(id int, secret string, step int64, hashes [
 // enabled 2FA on its way to a full session.
 func (u *userService) ClearPendingTOTP(id int, secret string) bool {
 	return changedOne("clear pending secret", u.db.Model(&model.UserDBModel{Id: id}).Where("totp_enabled = ? AND totp_secret = ?", false, secret).Update("totp_secret", ""))
+}
+
+// SetPendingTOTP stores a fresh, not yet enabled secret and reports whether
+// it did. Keyed on the row being still disabled: a setup that read the row
+// before /2fa/enable wrote it must not replace an enabled secret with a
+// pending one, which would leave the caller of enable with recovery codes
+// that exist nowhere.
+func (u *userService) SetPendingTOTP(id int, secret string) bool {
+	return changedOne("set pending secret", u.db.Model(&model.UserDBModel{Id: id}).Where("totp_enabled = ?", false).Update("totp_secret", secret))
+}
+
+// DisableUserTOTP zeroes the four 2FA columns and reports whether it did.
+// Keyed on the row being enabled with the secret the factor was checked
+// against: a disable that verified against one enrolment cannot turn off a
+// later one.
+func (u *userService) DisableUserTOTP(id int, secret string) bool {
+	return changedOne("disable", u.db.Model(&model.UserDBModel{Id: id}).Select("totp_secret", "totp_enabled", "totp_last_step", "recovery_codes").Where("totp_enabled = ? AND totp_secret = ?", true, secret).Updates(&model.UserDBModel{}))
 }
 
 // changedOne reports whether the statement updated exactly one row. A failing

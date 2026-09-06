@@ -9,7 +9,6 @@ import (
 	"github.com/IceWhaleTech/CasaOS-Common/utils/common_err"
 	"github.com/IceWhaleTech/CasaOS-UserService/common"
 	"github.com/IceWhaleTech/CasaOS-UserService/model"
-	model2 "github.com/IceWhaleTech/CasaOS-UserService/service/model"
 	"github.com/labstack/echo/v4"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/time/rate"
@@ -129,7 +128,11 @@ func PostUser2FASetup(ctx echo.Context) error {
 	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
 	}
-	service.MyService.User().UpdateUserTOTP(model2.UserDBModel{Id: user.Id, TotpSecret: key.Secret()})
+	// Keyed on the row being still disabled: an enable that landed since the
+	// read above wins, and this setup is refused like any other on an enabled row.
+	if !service.MyService.User().SetPendingTOTP(user.Id, key.Secret()) {
+		return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_ALREADY_ENABLED)
+	}
 	return ok(ctx, map[string]string{"secret": key.Secret(), "otpauth_url": key.URL()})
 }
 
@@ -162,11 +165,14 @@ func PostUser2FAEnable(ctx echo.Context) error {
 	}
 	// The enrolment step is recorded so that code cannot be replayed at first
 	// login. EnableUserTOTP is a compare-and-set on the pending secret: of two
-	// requests carrying the same code, one enables and gets its codes stored,
-	// the other is told 2FA is already enabled (also what a login that cleared
-	// the pending secret in between looks like: the setup is over either way).
+	// requests carrying the same code, one enables and gets its codes stored;
+	// the loser re-reads the row to say what happened — enabled by the other
+	// request, or the pending secret cleared by a password login in between.
 	if !service.MyService.User().EnableUserTOTP(user.Id, user.TotpSecret, step, hashes) {
-		return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_ALREADY_ENABLED)
+		if service.MyService.User().GetUserAllInfoById(strconv.Itoa(user.Id)).TotpEnabled {
+			return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_ALREADY_ENABLED)
+		}
+		return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_NOT_ENABLED)
 	}
 	return ok(ctx, map[string][]string{"recovery_codes": plain})
 }
@@ -199,6 +205,10 @@ func PostUser2FADisable(ctx echo.Context) error {
 	if !valid {
 		return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_CODE_INVALID)
 	}
-	service.MyService.User().UpdateUserTOTP(model2.UserDBModel{Id: user.Id})
+	// Keyed on the enrolment the factor was checked against: a stale disable
+	// cannot turn off a 2FA enabled again since it read the row.
+	if !service.MyService.User().DisableUserTOTP(user.Id, user.TotpSecret) {
+		return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_NOT_ENABLED)
+	}
 	return ok(ctx, nil)
 }
