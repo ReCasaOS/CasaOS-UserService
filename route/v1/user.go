@@ -82,8 +82,8 @@ func PostUserRegister(ctx echo.Context) error {
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS)})
 }
 
-// LoginLimiter is the service-wide budget for password-bearing requests
-// (/login and /2fa/verify): burst 5, refill 1/min. Exported so tests can lift it.
+// LoginLimiter is the service-wide budget for /login: burst 5, refill 1/min.
+// Exported so tests can lift it.
 var LoginLimiter = rate.NewLimiter(rate.Every(time.Minute), 5)
 
 // passwordMatches compares the stored MD5 hex with the candidate in constant time.

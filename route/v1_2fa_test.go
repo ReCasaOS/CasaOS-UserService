@@ -338,3 +338,25 @@ func TestReplayRace(t *testing.T) {
 		t.Fatalf("want 6 recovery codes left, got %d", got)
 	}
 }
+
+// TestVerifyOutsideLoginLimiter: an exhausted service-wide login budget
+// refuses /login but leaves /2fa/verify alone, garbage or not, so a stream of
+// garbage pre-auth tokens cannot starve /login and a legitimate 2FA login
+// costs one login token, not two.
+func TestVerifyOutsideLoginLimiter(t *testing.T) {
+	users, c := newRig(t)
+	const password = "correct horse"
+	users.CreateUser(model2.UserDBModel{Username: "carol", Password: encryption.GetMD5ByStr(password), Role: "admin"})
+	access, _ := tokens(t, c.expect(200, 200, "POST", "/v1/users/login", "", map[string]string{"username": "carol", "password": password}))
+	secret, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": password})["secret"].(string)
+	c.expect(200, 200, "POST", "/v1/users/2fa/enable", access, map[string]string{"code": codeAt(t, secret, time.Now())})
+	pre, _ := c.expect(200, 10014, "POST", "/v1/users/login", "", map[string]string{"username": "carol", "password": password})["pre_auth_token"].(string)
+
+	v1.LoginLimiter.SetLimit(0)
+	v1.LoginLimiter.SetBurst(0)
+	defer v1.LoginLimiter.SetLimit(rate.Inf)
+	c.expect(429, 10012, "POST", "/v1/users/login", "", map[string]string{"username": "carol", "password": password})
+	c.expect(400, 20006, "POST", "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": "garbage", "code": "000000"})
+	c.expect(400, 10015, "POST", "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": pre, "code": wrongCode(t, secret)})
+	tokens(t, c.expect(200, 200, "POST", "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": pre, "code": codeAt(t, secret, time.Now().Add(30*time.Second))}))
+}
