@@ -11,9 +11,11 @@ package service
 
 import (
 	"crypto/ecdsa"
+	"errors"
 	"io"
 	"mime/multipart"
 	"os"
+	"time"
 
 	"github.com/IceWhaleTech/CasaOS-Common/utils/jwt"
 	"github.com/IceWhaleTech/CasaOS-Common/utils/logger"
@@ -35,8 +37,11 @@ type UserService interface {
 	DeleteAllUser()
 	GetUserInfoByUserName(userName string) (m model.UserDBModel)
 	GetAllUserName() (list []model.UserDBModel)
+	UpdateUserTOTP(m model.UserDBModel)
 
 	GetKeyPair() (*ecdsa.PrivateKey, *ecdsa.PublicKey)
+	IssuePreAuthToken(m model.UserDBModel) (string, error)
+	ParsePreAuthToken(token string) (*jwt.Claims, error)
 }
 
 var UserRegisterHash = make(map[string]string)
@@ -44,6 +49,12 @@ var UserRegisterHash = make(map[string]string)
 type userService struct {
 	privateKey *ecdsa.PrivateKey // keep this private - NEVER expose it!!!
 	publicKey  *ecdsa.PublicKey
+
+	// preAuthPriv signs the token /login hands out between the password and
+	// the second factor. It is never published in the JWKS, so nothing else
+	// accepts that token as an access token.
+	preAuthPriv *ecdsa.PrivateKey
+	preAuthPub  *ecdsa.PublicKey
 
 	db *gorm.DB
 }
@@ -72,7 +83,13 @@ func (u *userService) GetUserCount() (userCount int64) {
 }
 
 func (u *userService) UpdateUser(m model.UserDBModel) {
-	u.db.Model(&m).Omit("password").Updates(&m)
+	u.db.Model(&m).Omit("password", "totp_secret", "totp_enabled", "totp_last_step", "recovery_codes").Updates(&m)
+}
+
+// UpdateUserTOTP writes the four 2FA columns, zero values included: Updates
+// alone skips false/0/"" and could never disable.
+func (u *userService) UpdateUserTOTP(m model.UserDBModel) {
+	u.db.Model(&m).Select("totp_secret", "totp_enabled", "totp_last_step", "recovery_codes").Updates(&m)
 }
 
 func (u *userService) UpdateUserPassword(m model.UserDBModel) {
@@ -90,12 +107,12 @@ func (u *userService) GetUserAllInfoByName(userName string) (m model.UserDBModel
 }
 
 func (u *userService) GetUserInfoById(id string) (m model.UserDBModel) {
-	u.db.Select("username", "id", "role", "nickname", "description", "avatar", "email").Where("id= ?", id).First(&m)
+	u.db.Select("username", "id", "role", "nickname", "description", "avatar", "email", "totp_enabled").Where("id= ?", id).First(&m)
 	return
 }
 
 func (u *userService) GetUserInfoByUserName(userName string) (m model.UserDBModel) {
-	u.db.Select("username", "id", "role", "nickname", "description", "avatar", "email").Where("username= ?", userName).First(&m)
+	u.db.Select("username", "id", "role", "nickname", "description", "avatar", "email", "totp_enabled").Where("username= ?", userName).First(&m)
 	return
 }
 
@@ -111,6 +128,21 @@ func (u *userService) GetKeyPair() (*ecdsa.PrivateKey, *ecdsa.PublicKey) {
 	return u.privateKey, u.publicKey
 }
 
+func (u *userService) IssuePreAuthToken(m model.UserDBModel) (string, error) {
+	return jwt.GenerateToken(m.Username, u.preAuthPriv, m.Id, "2fa", 5*time.Minute)
+}
+
+func (u *userService) ParsePreAuthToken(token string) (*jwt.Claims, error) {
+	claims, err := jwt.ParseToken(token, func() (*ecdsa.PublicKey, error) { return u.preAuthPub, nil })
+	if err != nil {
+		return nil, err
+	}
+	if !claims.VerifyIssuer("2fa", true) || !claims.VerifyExpiresAt(time.Now(), true) {
+		return nil, errors.New("invalid pre-auth token")
+	}
+	return claims, nil
+}
+
 // 获取用户Service
 func NewUserService(db *gorm.DB) UserService {
 	// DO NOT store private key anywhere - keep it in memory ONLY!!!
@@ -119,10 +151,17 @@ func NewUserService(db *gorm.DB) UserService {
 		logger.Error("failed to generate key pair for JWT", zap.Error(err))
 		return nil
 	}
+	preAuthPriv, preAuthPub, err := jwt.GenerateKeyPair()
+	if err != nil {
+		logger.Error("failed to generate key pair for pre-auth tokens", zap.Error(err))
+		return nil
+	}
 
 	return &userService{
-		privateKey: privateKey,
-		publicKey:  publicKey,
-		db:         db,
+		privateKey:  privateKey,
+		publicKey:   publicKey,
+		preAuthPriv: preAuthPriv,
+		preAuthPub:  preAuthPub,
+		db:          db,
 	}
 }
