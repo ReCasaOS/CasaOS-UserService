@@ -41,6 +41,7 @@ type UserService interface {
 	GetAllUserName() (list []model.UserDBModel)
 	UpdateUserTOTP(m model.UserDBModel)
 	EnableUserTOTP(id int, secret string, step int64, hashes []string) bool
+	ClearPendingTOTP(id int, secret string) bool
 	ConsumeTOTPStep(id int, step int64) bool
 	UseRecoveryCode(id int, code string) bool
 
@@ -104,6 +105,14 @@ func (u *userService) UpdateUserTOTP(m model.UserDBModel) {
 // it returned are the ones in the row; the loser updates nothing.
 func (u *userService) EnableUserTOTP(id int, secret string, step int64, hashes []string) bool {
 	return u.db.Model(&model.UserDBModel{Id: id}).Select("totp_enabled", "totp_last_step", "recovery_codes").Where("totp_enabled = ? AND totp_secret = ?", false, secret).Updates(&model.UserDBModel{TotpEnabled: true, TotpLastStep: step, RecoveryCodes: hashes}).RowsAffected == 1
+}
+
+// ClearPendingTOTP removes a never-enabled secret and reports whether it did.
+// The write is keyed on the row being still disabled with the secret as read:
+// a login that read the row before /2fa/enable wrote it must not zero an
+// enabled 2FA on its way to a full session.
+func (u *userService) ClearPendingTOTP(id int, secret string) bool {
+	return u.db.Model(&model.UserDBModel{Id: id}).Where("totp_enabled = ? AND totp_secret = ?", false, secret).Update("totp_secret", "").RowsAffected == 1
 }
 
 // ConsumeTOTPStep records step as the last accepted one and reports whether

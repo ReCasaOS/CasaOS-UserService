@@ -132,8 +132,12 @@ func PostUserLogin(ctx echo.Context) error {
 			model.Result{Success: common_err.USER_NOT_EXIST_OR_PWD_INVALID, Message: common_err.GetMsg(common_err.USER_NOT_EXIST_OR_PWD_INVALID)})
 	}
 	if !user.TotpEnabled && user.TotpSecret != "" {
-		// An abandoned /2fa/setup does not leave its secret in user.db.
-		service.MyService.User().UpdateUserTOTP(model2.UserDBModel{Id: user.Id})
+		// An abandoned /2fa/setup does not leave its secret in user.db. The
+		// clear is conditional on the row as read: if /2fa/enable won the race
+		// since, the row is left alone and this login must stop at the factor.
+		if !service.MyService.User().ClearPendingTOTP(user.Id, user.TotpSecret) {
+			user = service.MyService.User().GetUserAllInfoById(strconv.Itoa(user.Id))
+		}
 	}
 	if user.TotpEnabled {
 		preAuth, err := service.MyService.User().IssuePreAuthToken(user)

@@ -362,6 +362,38 @@ func TestReplayRace(t *testing.T) {
 	}
 }
 
+// TestLoginClearIsConditional plays the interleaving login-read, enable-write,
+// login-write: the login's clear of the pending secret is keyed on the row as
+// read, so it does not zero a 2FA enabled in between.
+func TestLoginClearIsConditional(t *testing.T) {
+	users, c := newRig(t)
+	const password = "correct horse"
+	user := users.CreateUser(model2.UserDBModel{Username: "dave", Password: encryption.GetMD5ByStr(password), Role: "admin"})
+	access, _ := tokens(t, c.expect(200, 200, "POST", "/v1/users/login", "", map[string]string{"username": "dave", "password": password}))
+	secret, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": password})["secret"].(string)
+
+	// login-read happened above (pending secret); enable-write:
+	c.expect(200, 200, "POST", "/v1/users/2fa/enable", access, map[string]string{"code": codeAt(t, secret, time.Now())})
+	// login-write on the stale read must touch nothing.
+	if users.ClearPendingTOTP(user.Id, secret) {
+		t.Fatal("ClearPendingTOTP zeroed an enabled 2FA")
+	}
+	if row := users.GetUserAllInfoById(strconv.Itoa(user.Id)); !row.TotpEnabled || row.TotpSecret != secret {
+		t.Fatalf("row after the stale clear: enabled=%v secret=%q", row.TotpEnabled, row.TotpSecret)
+	}
+	c.expect(200, 10014, "POST", "/v1/users/login", "", map[string]string{"username": "dave", "password": password})
+
+	// A pending secret is cleared, once, and only the one that was read.
+	c.expect(200, 200, "POST", "/v1/users/2fa/disable", access, map[string]string{"password": password})
+	pending, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": password})["secret"].(string)
+	if users.ClearPendingTOTP(user.Id, secret) || !users.ClearPendingTOTP(user.Id, pending) || users.ClearPendingTOTP(user.Id, pending) {
+		t.Fatal("ClearPendingTOTP must clear the pending secret it was given, once")
+	}
+	if row := users.GetUserAllInfoById(strconv.Itoa(user.Id)); row.TotpEnabled || row.TotpSecret != "" {
+		t.Fatalf("row after the clear: enabled=%v secret=%q", row.TotpEnabled, row.TotpSecret)
+	}
+}
+
 // TestVerifyOutsideLoginLimiter: an exhausted service-wide login budget
 // refuses /login but leaves /2fa/verify alone, garbage or not, so a stream of
 // garbage pre-auth tokens cannot starve /login and a legitimate 2FA login
