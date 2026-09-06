@@ -6,7 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IceWhaleTech/CasaOS-Common/utils/logger"
+	"github.com/IceWhaleTech/CasaOS-UserService/service/model"
+	"github.com/glebarez/sqlite"
 	"github.com/pquerna/otp/totp"
+	"gorm.io/gorm"
 )
 
 func TestVerifyTOTP(t *testing.T) {
@@ -88,5 +92,29 @@ func TestRecoveryCodes(t *testing.T) {
 	}
 	if len(hashes) != 8 {
 		t.Fatal("the original list was modified")
+	}
+}
+
+// TestCompareAndSetFailsClosed: on a database that cannot execute the write,
+// every compare-and-set refuses (and logs) rather than reading as accepted.
+func TestCompareAndSetFailsClosed(t *testing.T) {
+	logger.LogInitConsoleOnly()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.UserDBModel{}); err != nil {
+		t.Fatal(err)
+	}
+	plain, hashes, err := NewRecoveryCodes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := NewUserService(db)
+	user := u.CreateUser(model.UserDBModel{Username: "erin", TotpSecret: "S", TotpEnabled: true, RecoveryCodes: hashes})
+	sqlDB, _ := db.DB()
+	sqlDB.Close()
+	if u.ConsumeTOTPStep(user.Id, 1) || u.UseRecoveryCode(user.Id, plain[0]) || u.EnableUserTOTP(user.Id, "S", 1, hashes) || u.ClearPendingTOTP(user.Id, "S") {
+		t.Fatal("a failing database must refuse, not accept")
 	}
 }

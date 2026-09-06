@@ -16,7 +16,6 @@ import (
 	"io"
 	"mime/multipart"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/IceWhaleTech/CasaOS-Common/utils/jwt"
@@ -104,7 +103,7 @@ func (u *userService) UpdateUserTOTP(m model.UserDBModel) {
 // enable requests released together exactly one wins and the recovery codes
 // it returned are the ones in the row; the loser updates nothing.
 func (u *userService) EnableUserTOTP(id int, secret string, step int64, hashes []string) bool {
-	return u.db.Model(&model.UserDBModel{Id: id}).Select("totp_enabled", "totp_last_step", "recovery_codes").Where("totp_enabled = ? AND totp_secret = ?", false, secret).Updates(&model.UserDBModel{TotpEnabled: true, TotpLastStep: step, RecoveryCodes: hashes}).RowsAffected == 1
+	return changedOne("enable", u.db.Model(&model.UserDBModel{Id: id}).Select("totp_enabled", "totp_last_step", "recovery_codes").Where("totp_enabled = ? AND totp_secret = ?", false, secret).Updates(&model.UserDBModel{TotpEnabled: true, TotpLastStep: step, RecoveryCodes: hashes}))
 }
 
 // ClearPendingTOTP removes a never-enabled secret and reports whether it did.
@@ -112,7 +111,18 @@ func (u *userService) EnableUserTOTP(id int, secret string, step int64, hashes [
 // a login that read the row before /2fa/enable wrote it must not zero an
 // enabled 2FA on its way to a full session.
 func (u *userService) ClearPendingTOTP(id int, secret string) bool {
-	return u.db.Model(&model.UserDBModel{Id: id}).Where("totp_enabled = ? AND totp_secret = ?", false, secret).Update("totp_secret", "").RowsAffected == 1
+	return changedOne("clear pending secret", u.db.Model(&model.UserDBModel{Id: id}).Where("totp_enabled = ? AND totp_secret = ?", false, secret).Update("totp_secret", ""))
+}
+
+// changedOne reports whether the statement updated exactly one row. A failing
+// statement (locked or broken database) is logged and counts as no row: the
+// factor is refused, never accepted, on a database that could not record it.
+func changedOne(what string, res *gorm.DB) bool {
+	if res.Error != nil {
+		logger.Error("2fa: "+what+" failed", zap.Error(res.Error))
+		return false
+	}
+	return res.RowsAffected == 1
 }
 
 // ConsumeTOTPStep records step as the last accepted one and reports whether
@@ -121,7 +131,7 @@ func (u *userService) ClearPendingTOTP(id int, secret string) bool {
 // write lock, so of two requests replaying the same code the second one
 // finds the step already recorded and updates no row.
 func (u *userService) ConsumeTOTPStep(id int, step int64) bool {
-	return u.db.Model(&model.UserDBModel{Id: id}).Where("totp_last_step < ?", step).Update("totp_last_step", step).RowsAffected == 1
+	return changedOne("consume step", u.db.Model(&model.UserDBModel{Id: id}).Where("totp_last_step < ?", step).Update("totp_last_step", step))
 }
 
 // UseRecoveryCode removes the hash matching code from the user's list and
@@ -133,13 +143,17 @@ func (u *userService) ConsumeTOTPStep(id int, step int64) bool {
 // ponytail: two *different* codes used in the same instant also lose one;
 // the losing code is not consumed, its owner just retries.
 func (u *userService) UseRecoveryCode(id int, code string) bool {
-	user := u.GetUserAllInfoById(strconv.Itoa(id))
+	var user model.UserDBModel
+	if err := u.db.Where("id = ?", id).First(&user).Error; err != nil {
+		logger.Error("2fa: read recovery codes failed", zap.Error(err))
+		return false
+	}
 	remaining, ok := ConsumeRecoveryCode(user.RecoveryCodes, code)
 	if !ok {
 		return false
 	}
 	prev, _ := json.Marshal(user.RecoveryCodes)
-	return u.db.Model(&model.UserDBModel{Id: id}).Select("recovery_codes").Where("recovery_codes = ?", string(prev)).Updates(&model.UserDBModel{RecoveryCodes: remaining}).RowsAffected == 1
+	return changedOne("use recovery code", u.db.Model(&model.UserDBModel{Id: id}).Select("recovery_codes").Where("recovery_codes = ?", string(prev)).Updates(&model.UserDBModel{RecoveryCodes: remaining}))
 }
 
 func (u *userService) UpdateUserPassword(m model.UserDBModel) {
