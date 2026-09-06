@@ -48,7 +48,7 @@ func ok(ctx echo.Context, data interface{}) error {
 // PostUser2FAVerify exchanges the pre-auth token from /login plus a TOTP code
 // or a recovery code for the usual access and refresh tokens. Public route.
 func PostUser2FAVerify(ctx echo.Context) error {
-	if !limiter.Allow() {
+	if !LoginLimiter.Allow() {
 		return fail(ctx, common_err.TOO_MANY_REQUEST, common_err.TOO_MANY_LOGIN_REQUESTS)
 	}
 	json := make(map[string]string)

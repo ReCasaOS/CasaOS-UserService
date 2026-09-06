@@ -64,7 +64,7 @@ go test ./...
 
 `codegen/` is not committed — it is in `.gitignore` — so `go generate` has to run first, on a fresh clone as much as here. It writes `codegen/user_service` from `api/user-service/openapi.yaml` and `codegen/message_bus` from CasaOS-MessageBus's published OpenAPI document fetched over HTTP, so it needs network access. The release workflow does the same before it builds.
 
-The module targets Go 1.20 and builds without cgo. `go test ./...` reports no test files in every package: this repository has no test suite, and the command passing means only that everything compiles.
+The module targets Go 1.20 and builds without cgo. The test suite covers the two-factor path: `service/totp_test.go` (step window, replay guard, recovery codes), `pkg/sqlite/migrate_test.go` (an existing `o_users` row survives the column additions) and `route/v1_2fa_test.go`, which drives the real router over an in-memory database through enrolment, login, verification, recovery, rate limiting and disable. Every other package still reports no test files.
 
 ## Licence
 
