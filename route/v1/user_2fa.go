@@ -18,10 +18,14 @@ import (
 )
 
 // Per-user limiter for second-factor and password checks: burst 5, refill
-// 5/min. Correct answers cost nothing; a wrong one consumes a token, and a
-// request with no token left is refused before anything is checked.
+// 5/min. Every attempt costs a token, correct answers included, and the token
+// is taken before anything is checked: N concurrent attempts cannot all see a
+// full bucket and all get verified. Five a minute is plenty for a human.
 // ponytail: the map grows with the user count (one admin) and is never pruned.
 var (
+	// UserLimit is the per-user refill rate; exported so tests can lift it.
+	UserLimit = rate.Every(time.Minute / 5)
+
 	userLimitersMu sync.Mutex
 	userLimiters   = map[int]*rate.Limiter{}
 )
@@ -31,7 +35,7 @@ func userLimiter(id int) *rate.Limiter {
 	defer userLimitersMu.Unlock()
 	l, ok := userLimiters[id]
 	if !ok {
-		l = rate.NewLimiter(rate.Every(time.Minute/5), 5)
+		l = rate.NewLimiter(UserLimit, 5)
 		userLimiters[id] = l
 	}
 	return l
@@ -63,8 +67,7 @@ func PostUser2FAVerify(ctx echo.Context) error {
 	if user.Id == 0 || !user.TotpEnabled {
 		return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_NOT_ENABLED)
 	}
-	lim := userLimiter(user.Id)
-	if lim.Tokens() < 1 {
+	if !userLimiter(user.Id).Allow() {
 		return fail(ctx, common_err.TOO_MANY_REQUEST, common_err.TOO_MANY_LOGIN_REQUESTS)
 	}
 
@@ -73,14 +76,12 @@ func PostUser2FAVerify(ctx echo.Context) error {
 	case code != "" && recovery == "":
 		step, valid := service.VerifyTOTP(user.TotpSecret, code, user.TotpLastStep, time.Now())
 		if !valid {
-			lim.Allow()
 			return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_CODE_INVALID)
 		}
 		user.TotpLastStep = step
 	case recovery != "" && code == "":
 		remaining, valid := service.ConsumeRecoveryCode(user.RecoveryCodes, recovery)
 		if !valid {
-			lim.Allow()
 			return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_CODE_INVALID)
 		}
 		user.RecoveryCodes = remaining
@@ -121,8 +122,7 @@ func PostUser2FAEnable(ctx echo.Context) error {
 	if user.TotpSecret == "" {
 		return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_NOT_ENABLED)
 	}
-	lim := userLimiter(user.Id)
-	if lim.Tokens() < 1 {
+	if !userLimiter(user.Id).Allow() {
 		return fail(ctx, common_err.TOO_MANY_REQUEST, common_err.TOO_MANY_LOGIN_REQUESTS)
 	}
 	json := make(map[string]string)
@@ -130,7 +130,6 @@ func PostUser2FAEnable(ctx echo.Context) error {
 
 	step, valid := service.VerifyTOTP(user.TotpSecret, json["code"], 0, time.Now())
 	if !valid {
-		lim.Allow()
 		return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_CODE_INVALID)
 	}
 	plain, hashes, err := service.NewRecoveryCodes()
@@ -158,8 +157,7 @@ func PostUser2FADisable(ctx echo.Context) error {
 	if (code == "") == (password == "") { // exactly one of the two
 		return fail(ctx, common_err.CLIENT_ERROR, common_err.INVALID_PARAMS)
 	}
-	lim := userLimiter(user.Id)
-	if lim.Tokens() < 1 {
+	if !userLimiter(user.Id).Allow() {
 		return fail(ctx, common_err.TOO_MANY_REQUEST, common_err.TOO_MANY_LOGIN_REQUESTS)
 	}
 
@@ -170,7 +168,6 @@ func PostUser2FADisable(ctx echo.Context) error {
 		valid = passwordMatches(user.Password, password)
 	}
 	if !valid {
-		lim.Allow()
 		return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_CODE_INVALID)
 	}
 	service.MyService.User().UpdateUserTOTP(model2.UserDBModel{Id: user.Id})

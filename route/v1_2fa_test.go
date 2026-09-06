@@ -121,8 +121,10 @@ func TestTwoFactorFlow(t *testing.T) {
 	service.MyService = fakeRepo{user: users}
 	c := client{t: t, h: route.InitRouter()}
 	// The service-wide login budget (5/min) would stop this flow at its sixth
-	// login-class request; the per-user limiter is what is under test here.
+	// login-class request, and the per-user budget (5/min, right or wrong) at
+	// the sixth factor check; both are exercised on their own below.
 	v1.LoginLimiter.SetLimit(rate.Inf)
+	v1.UserLimit = rate.Inf
 
 	const password = "correct horse"
 	users.CreateUser(model2.UserDBModel{Username: "admin", Password: encryption.GetMD5ByStr(password), Role: "admin"})
@@ -232,15 +234,18 @@ func TestTwoFactorFlow(t *testing.T) {
 	}
 	c.expect(400, 10017, "POST", "/v1/users/2fa/enable", access2, map[string]string{"code": "000000"})
 
-	// Wrong codes are rate-limited per user: the sixth within a minute is 429,
-	// and the budget is shared with the other factor checks of that user.
+	// Factor checks are rate-limited per user: the sixth within a minute is 429
+	// whether the code is right or wrong, and the budget is shared with the
+	// other factor checks of that user. Bob's limiter is created at his first
+	// check, so the real rate is restored before it.
+	v1.UserLimit = rate.Every(time.Minute / 5)
 	users.CreateUser(model2.UserDBModel{Username: "bob", Password: encryption.GetMD5ByStr(password), Role: "admin"})
 	bobAccess, _ := tokens(t, c.expect(200, 200, "POST", "/v1/users/login", "", map[string]string{"username": "bob", "password": password}))
 	bobSecret, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", bobAccess, nil)["secret"].(string)
-	c.expect(200, 200, "POST", "/v1/users/2fa/enable", bobAccess, map[string]string{"code": codeAt(t, bobSecret, time.Now())})
+	c.expect(200, 200, "POST", "/v1/users/2fa/enable", bobAccess, map[string]string{"code": codeAt(t, bobSecret, time.Now())}) // first token spent here
 	bobPre, _ := c.expect(200, 10014, "POST", "/v1/users/login", "", map[string]string{"username": "bob", "password": password})["pre_auth_token"].(string)
 	wrong := wrongCode(t, bobSecret)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 4; i++ {
 		c.expect(400, 10015, "POST", "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": bobPre, "code": wrong})
 	}
 	c.expect(429, 10012, "POST", "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": bobPre, "code": wrong})
