@@ -18,6 +18,23 @@ Everything else under `/v1/users` sits behind JWT middleware, which skips the ch
 
 Configuration is `/etc/casaos/user-service.conf`, written from an embedded sample on first run. It points at the SQLite database `/var/lib/casaos/db/user.db`, at per-user files under `/var/lib/casaos/<user id>/`, and at the log `/var/log/casaos/user-service.log`. The binary is installed as `/usr/bin/casaos-user-service` and runs under `casaos-user-service.service`. Run it as `casaos-user-service -ru -user <name>` to reset a forgotten password to a random one, which it prints.
 
+## Two-factor authentication
+
+A user can protect the account with a TOTP authenticator (RFC 6238, SHA-1, six digits, 30 s period, one step of skew) plus eight single-use recovery codes. Everything lives on `/v1/users`, next to `/login`; the v2 OpenAPI document is not extended, because every path it declares is generated under `/v2/users` behind the JWT middleware and `/2fa/verify` must be reachable without an access token. Responses use the usual `{success, message, data}` envelope.
+
+| Route | Auth | Body | Result |
+|---|---|---|---|
+| `POST /v1/users/login` | none | `{username, password}` | unchanged when 2FA is off. When it is on: `success` **10014**, `data = {pre_auth_token, expires_at}`; no access token is issued. |
+| `POST /v1/users/2fa/verify` | none | `{pre_auth_token, code}` or `{pre_auth_token, recovery_code}` | `200` with the same `data` as a login (`token` + `user`). `400` with 20006 (pre-auth token invalid or expired), 10015 (wrong code or recovery code), 10017 (2FA not enabled). `429` with 10012 after five wrong codes in a minute for that user, or from the global login limiter. |
+| `POST /v1/users/2fa/setup` | access token | — | `data = {secret, otpauth_url}`; the secret is pending until `enable` confirms it. `400` with 10016 if already enabled: an enabled secret is never rotated without a factor. |
+| `POST /v1/users/2fa/enable` | access token | `{code}` | `data = {recovery_codes: [8 × "xxxxx-xxxxx"]}`, shown once and never retrievable. `400` with 10015 (wrong code), 10016 (already enabled), 10017 (no pending setup). |
+| `POST /v1/users/2fa/disable` | access token | `{code}` or `{password}` | `200`. `400` with 4000 (neither field), 10015 (wrong code or password), 10017 (not enabled). |
+| `GET /v1/users/current` | access token | — | unchanged, `data` gains `totp_enabled`. |
+
+The pre-auth token is an ES256 JWT with `iss: "2fa"` and a five-minute lifetime, signed by a second key pair that is never published in the JWKS, so no other service — and no other route here — accepts it as an access token. `/2fa/verify` checks the signature against that key, then the issuer and expiry. A code is accepted for the current 30 s step and its two neighbours, and each step is accepted once: the last accepted step is stored, so a captured code cannot be replayed within its window. Recovery codes are ten characters of `a-z2-7` (fifty bits), case-insensitive, hyphen optional, stored as bcrypt hashes and removed as they are used; to get a new set, disable and enable again. The TOTP seed itself cannot be hashed — the server recomputes codes from it — so it sits in clear in `user.db` next to the MD5 password hash.
+
+Enabling or disabling 2FA does not revoke tokens already issued; a refresh token keeps renewing a session obtained before the change. If both the authenticator and the recovery codes are lost, `casaos-user-service -ru -user <name>` resets the password and clears 2FA together, which is the only way back in short of editing `user.db`.
+
 ## Install
 
 Components are not installed individually. The whole distribution is installed and upgraded with one command:
@@ -30,7 +47,9 @@ What a release contains, and how it is built, is described in [CasaOS-Install](h
 
 ## What this fork changed
 
-Nothing in the service itself. The Go code here is upstream's; the two commits this distribution carries are about getting it built and installed.
+One feature, and the two commits that got it built and installed.
+
+- **Two-factor authentication** (this distribution). TOTP enrolment, verification and recovery codes on `/v1/users/2fa/*`, described above. Upstream never had a second factor on the admin account.
 
 - **Ubuntu 26 setup fallback** (alvins82). The setup script chose its per-distribution script by `pushd`-ing `${ID}/${VERSION_CODENAME}`, then `${ID}`, then each entry of `${ID_LIKE}`, and the chain fell through on a release with no directory of its own. It now builds the candidate list from `/etc/os-release` and takes the first candidate that actually contains a `setup-user-service.sh`.
 - **Release pipeline** (this distribution). The goreleaser config still published to `IceWhaleTech/CasaOS-UserService`, which returns 403 from a fork, and the release workflow called IceWhale's shared workflow with secrets no fork has, so no tag had ever produced a release here. The workflow now runs `go generate` and `go test`, cross-compiles for amd64, arm64 and arm/v7, and publishes the tarballs and the `checksums.txt` that the installer verifies. Three workflows that could only ever run at IceWhale were removed: npm publish to the `@icewhale` scope, a push to their test server, and an OpenAPI sync from their organisation.
