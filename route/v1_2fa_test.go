@@ -115,8 +115,8 @@ func wrongCode(t *testing.T, secret string) string {
 // would stop a flow at its sixth login-class request, the per-user one
 // (5/min, right or wrong) at the sixth factor check. Tests that exercise a
 // budget restore it themselves. User ids restart at 1 in every rig while
-// the per-user limiters are process-wide, so a limiter created under a
-// real rate in one test is inherited by the same id in the next.
+// the per-user limiters are process-wide, so the map is reset here: a
+// budget spent on an id in one test is not inherited by the next.
 func newRig(t *testing.T) (service.UserService, client) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -132,7 +132,28 @@ func newRig(t *testing.T) (service.UserService, client) {
 	service.MyService = fakeRepo{user: users}
 	v1.LoginLimiter.SetLimit(rate.Inf)
 	v1.UserLimit = rate.Inf
+	v1.ResetUserLimiters()
 	return users, client{t: t, h: route.InitRouter()}
+}
+
+// TestLimiterResetPerRig: a budget exhausted on user id 1 in one rig is not
+// inherited by user id 1 of the next.
+func TestLimiterResetPerRig(t *testing.T) {
+	const password = "correct horse"
+	exhaust := func(expect int) {
+		t.Helper()
+		users, c := newRig(t)
+		v1.UserLimit = rate.Every(time.Minute / 5)
+		users.CreateUser(model2.UserDBModel{Username: "frank", Password: encryption.GetMD5ByStr(password), Role: "admin"})
+		access, _ := tokens(t, c.expect(200, 200, "POST", "/v1/users/login", "", map[string]string{"username": "frank", "password": password}))
+		c.expect(400, expect, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": "wrong"})
+		for i := 0; i < 5; i++ {
+			c.do("POST", "/v1/users/2fa/setup", access, map[string]string{"password": "wrong"})
+		}
+		c.expect(429, 10012, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": "wrong"})
+	}
+	exhaust(10015)
+	exhaust(10015) // 10012 without the reset in newRig
 }
 
 func TestTwoFactorFlow(t *testing.T) {

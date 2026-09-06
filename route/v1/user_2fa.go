@@ -41,6 +41,15 @@ func userLimiter(id int) *rate.Limiter {
 	return l
 }
 
+// ResetUserLimiters drops every per-user limiter. Test hook: user ids restart
+// at 1 in every fresh database while this map is process-wide, so without it
+// a test inherits the budget another test spent on the same id.
+func ResetUserLimiters() {
+	userLimitersMu.Lock()
+	defer userLimitersMu.Unlock()
+	userLimiters = map[int]*rate.Limiter{}
+}
+
 func fail(ctx echo.Context, status, code int) error {
 	return ctx.JSON(status, model.Result{Success: code, Message: common.GetMsg(code)})
 }
