@@ -91,6 +91,10 @@ func PostUser2FAVerify(ctx echo.Context) error {
 }
 
 // PostUser2FASetup stores a pending secret and returns it for the authenticator.
+// The session is not enough: the JWT middleware accepts a refresh token as an
+// access token, so a stolen token alone must not be able to enrol an
+// authenticator and lock the owner out. The password is required, as on
+// /2fa/disable, and the check draws on the same per-user budget.
 func PostUser2FASetup(ctx echo.Context) error {
 	user := service.MyService.User().GetUserAllInfoById(ctx.Request().Header.Get("user_id"))
 	if user.Id == 0 {
@@ -98,6 +102,17 @@ func PostUser2FASetup(ctx echo.Context) error {
 	}
 	if user.TotpEnabled {
 		return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_ALREADY_ENABLED)
+	}
+	json := make(map[string]string)
+	ctx.Bind(&json)
+	if json["password"] == "" {
+		return fail(ctx, common_err.CLIENT_ERROR, common_err.INVALID_PARAMS)
+	}
+	if !userLimiter(user.Id).Allow() {
+		return fail(ctx, common_err.TOO_MANY_REQUEST, common_err.TOO_MANY_LOGIN_REQUESTS)
+	}
+	if !passwordMatches(user.Password, json["password"]) {
+		return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_CODE_INVALID)
 	}
 	key, err := totp.Generate(totp.GenerateOpts{Issuer: "CasaOS", AccountName: user.Username})
 	if err != nil {

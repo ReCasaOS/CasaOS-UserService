@@ -163,10 +163,18 @@ func TestTwoFactorFlow(t *testing.T) {
 		t.Fatalf("totp_enabled should be false: %v", data["user"])
 	}
 
-	// Enrol: setup returns the secret, enable needs a code from an authenticator.
+	// Enrol: setup needs the password on top of the session and returns the
+	// secret; enable needs a code from an authenticator.
 	c.expect(400, 10017, "POST", "/v1/users/2fa/enable", access, map[string]string{"code": "000000"}) // nothing pending yet; no limiter cost
-	setup := c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, nil)
+	c.expect(400, 4000, "POST", "/v1/users/2fa/setup", access, nil)
+	c.expect(400, 10015, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": "wrong"})
+	setup := c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": password})
 	secret, _ := setup["secret"].(string)
+	// A password login clears a pending secret: an abandoned setup leaves nothing behind.
+	login()
+	c.expect(400, 10017, "POST", "/v1/users/2fa/enable", access, map[string]string{"code": codeAt(t, secret, time.Now())})
+	setup = c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": password})
+	secret, _ = setup["secret"].(string)
 	if secret == "" || !strings.HasPrefix(setup["otpauth_url"].(string), "otpauth://totp/CasaOS:admin?") {
 		t.Fatalf("bad setup response: %v", setup)
 	}
@@ -248,15 +256,16 @@ func TestTwoFactorFlow(t *testing.T) {
 	// Factor checks are rate-limited per user: the sixth within a minute is 429
 	// whether the code is right or wrong, and the budget is shared with the
 	// other factor checks of that user. Bob's limiter is created at his first
-	// check, so the real rate is restored before it.
+	// check, so the real rate is restored before it: setup, enable and three
+	// wrong codes spend the five tokens.
 	v1.UserLimit = rate.Every(time.Minute / 5)
 	users.CreateUser(model2.UserDBModel{Username: "bob", Password: encryption.GetMD5ByStr(password), Role: "admin"})
 	bobAccess, _ := tokens(t, c.expect(200, 200, "POST", "/v1/users/login", "", map[string]string{"username": "bob", "password": password}))
-	bobSecret, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", bobAccess, nil)["secret"].(string)
-	c.expect(200, 200, "POST", "/v1/users/2fa/enable", bobAccess, map[string]string{"code": codeAt(t, bobSecret, time.Now())}) // first token spent here
+	bobSecret, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", bobAccess, map[string]string{"password": password})["secret"].(string)
+	c.expect(200, 200, "POST", "/v1/users/2fa/enable", bobAccess, map[string]string{"code": codeAt(t, bobSecret, time.Now())}) // second token: setup spent the first
 	bobPre, _ := c.expect(200, 10014, "POST", "/v1/users/login", "", map[string]string{"username": "bob", "password": password})["pre_auth_token"].(string)
 	wrong := wrongCode(t, bobSecret)
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ {
 		c.expect(400, 10015, "POST", "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": bobPre, "code": wrong})
 	}
 	c.expect(429, 10012, "POST", "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": bobPre, "code": wrong})
@@ -274,7 +283,7 @@ func TestReplayRace(t *testing.T) {
 	const password = "correct horse"
 	user := users.CreateUser(model2.UserDBModel{Username: "alice", Password: encryption.GetMD5ByStr(password), Role: "admin"})
 	access, _ := tokens(t, c.expect(200, 200, "POST", "/v1/users/login", "", map[string]string{"username": "alice", "password": password}))
-	secret, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, nil)["secret"].(string)
+	secret, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": password})["secret"].(string)
 	enabled := c.expect(200, 200, "POST", "/v1/users/2fa/enable", access, map[string]string{"code": codeAt(t, secret, time.Now())})
 	recovery, _ := enabled["recovery_codes"].([]interface{})[0].(string)
 	pre, _ := c.expect(200, 10014, "POST", "/v1/users/login", "", map[string]string{"username": "alice", "password": password})["pre_auth_token"].(string)

@@ -131,7 +131,10 @@ func PostUserLogin(ctx echo.Context) error {
 		return ctx.JSON(common_err.CLIENT_ERROR,
 			model.Result{Success: common_err.USER_NOT_EXIST_OR_PWD_INVALID, Message: common_err.GetMsg(common_err.USER_NOT_EXIST_OR_PWD_INVALID)})
 	}
-
+	if !user.TotpEnabled && user.TotpSecret != "" {
+		// An abandoned /2fa/setup does not leave its secret in user.db.
+		service.MyService.User().UpdateUserTOTP(model2.UserDBModel{Id: user.Id})
+	}
 	if user.TotpEnabled {
 		preAuth, err := service.MyService.User().IssuePreAuthToken(user)
 		if err != nil {
