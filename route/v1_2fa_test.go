@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -107,7 +109,15 @@ func wrongCode(t *testing.T, secret string) string {
 	return ""
 }
 
-func TestTwoFactorFlow(t *testing.T) {
+// newRig wires the real router and user service on a fresh in-memory
+// database, with both login budgets lifted: the service-wide one (5/min)
+// would stop a flow at its sixth login-class request, the per-user one
+// (5/min, right or wrong) at the sixth factor check. Tests that exercise a
+// budget restore it themselves. User ids restart at 1 in every rig while
+// the per-user limiters are process-wide, so a limiter created under a
+// real rate in one test is inherited by the same id in the next.
+func newRig(t *testing.T) (service.UserService, client) {
+	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -119,12 +129,13 @@ func TestTwoFactorFlow(t *testing.T) {
 	}
 	users := service.NewUserService(db)
 	service.MyService = fakeRepo{user: users}
-	c := client{t: t, h: route.InitRouter()}
-	// The service-wide login budget (5/min) would stop this flow at its sixth
-	// login-class request, and the per-user budget (5/min, right or wrong) at
-	// the sixth factor check; both are exercised on their own below.
 	v1.LoginLimiter.SetLimit(rate.Inf)
 	v1.UserLimit = rate.Inf
+	return users, client{t: t, h: route.InitRouter()}
+}
+
+func TestTwoFactorFlow(t *testing.T) {
+	users, c := newRig(t)
 
 	const password = "correct horse"
 	users.CreateUser(model2.UserDBModel{Username: "admin", Password: encryption.GetMD5ByStr(password), Role: "admin"})
@@ -253,4 +264,68 @@ func TestTwoFactorFlow(t *testing.T) {
 	c.expect(429, 10012, "POST", "/v1/users/2fa/disable", bobAccess, map[string]string{"password": password})
 	// The admin is not affected by the limiter of another user.
 	login()
+}
+
+// TestReplayRace fires the same code twice at once and checks that the
+// persistence layer lets exactly one request through: the replay guard is
+// a conditional UPDATE, not a read-check-write in the handler.
+func TestReplayRace(t *testing.T) {
+	users, c := newRig(t)
+	const password = "correct horse"
+	user := users.CreateUser(model2.UserDBModel{Username: "alice", Password: encryption.GetMD5ByStr(password), Role: "admin"})
+	access, _ := tokens(t, c.expect(200, 200, "POST", "/v1/users/login", "", map[string]string{"username": "alice", "password": password}))
+	secret, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, nil)["secret"].(string)
+	enabled := c.expect(200, 200, "POST", "/v1/users/2fa/enable", access, map[string]string{"code": codeAt(t, secret, time.Now())})
+	recovery, _ := enabled["recovery_codes"].([]interface{})[0].(string)
+	pre, _ := c.expect(200, 10014, "POST", "/v1/users/login", "", map[string]string{"username": "alice", "password": password})["pre_auth_token"].(string)
+
+	// race sends body from n goroutines released together and counts the 200s.
+	race := func(n int, body map[string]string) (okCount, invalidCount int) {
+		t.Helper()
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				status, res := c.do("POST", "/v1/users/2fa/verify", "", body)
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case status == 200 && res.Success == 200:
+					okCount++
+				case status == 400 && res.Success == 10015:
+					invalidCount++
+				default:
+					t.Errorf("unexpected %d/%d", status, res.Success)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		return
+	}
+
+	code := codeAt(t, secret, time.Now().Add(30*time.Second)) // the enrolment step is spent
+	if ok, bad := race(4, map[string]string{"pre_auth_token": pre, "code": code}); ok != 1 || bad != 3 {
+		t.Fatalf("TOTP code accepted %d times (%d refused), want exactly once", ok, bad)
+	}
+	if ok, bad := race(4, map[string]string{"pre_auth_token": pre, "recovery_code": recovery}); ok != 1 || bad != 3 {
+		t.Fatalf("recovery code accepted %d times (%d refused), want exactly once", ok, bad)
+	}
+
+	// The same guarantee, sequentially, at the service layer the handler relies on.
+	step := time.Now().Unix()/30 + 2
+	if !users.ConsumeTOTPStep(user.Id, step) || users.ConsumeTOTPStep(user.Id, step) || users.ConsumeTOTPStep(user.Id, step-1) {
+		t.Fatal("ConsumeTOTPStep must accept a step once and never an older one")
+	}
+	other, _ := enabled["recovery_codes"].([]interface{})[1].(string)
+	if !users.UseRecoveryCode(user.Id, other) || users.UseRecoveryCode(user.Id, other) || users.UseRecoveryCode(user.Id, recovery) {
+		t.Fatal("UseRecoveryCode must consume a code once")
+	}
+	if got := len(users.GetUserAllInfoById(strconv.Itoa(user.Id)).RecoveryCodes); got != 6 {
+		t.Fatalf("want 6 recovery codes left, got %d", got)
+	}
 }

@@ -11,10 +11,12 @@ package service
 
 import (
 	"crypto/ecdsa"
+	"encoding/json"
 	"errors"
 	"io"
 	"mime/multipart"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/IceWhaleTech/CasaOS-Common/utils/jwt"
@@ -38,6 +40,8 @@ type UserService interface {
 	GetUserInfoByUserName(userName string) (m model.UserDBModel)
 	GetAllUserName() (list []model.UserDBModel)
 	UpdateUserTOTP(m model.UserDBModel)
+	ConsumeTOTPStep(id int, step int64) bool
+	UseRecoveryCode(id int, code string) bool
 
 	GetKeyPair() (*ecdsa.PrivateKey, *ecdsa.PublicKey)
 	IssuePreAuthToken(m model.UserDBModel) (string, error)
@@ -90,6 +94,33 @@ func (u *userService) UpdateUser(m model.UserDBModel) {
 // alone skips false/0/"" and could never disable.
 func (u *userService) UpdateUserTOTP(m model.UserDBModel) {
 	u.db.Model(&m).Select("totp_secret", "totp_enabled", "totp_last_step", "recovery_codes").Updates(&m)
+}
+
+// ConsumeTOTPStep records step as the last accepted one and reports whether
+// it was still unused. The replay guard lives here, in one conditional
+// UPDATE, so no caller can bypass it: SQLite executes a statement under its
+// write lock, so of two requests replaying the same code the second one
+// finds the step already recorded and updates no row.
+func (u *userService) ConsumeTOTPStep(id int, step int64) bool {
+	return u.db.Model(&model.UserDBModel{Id: id}).Where("totp_last_step < ?", step).Update("totp_last_step", step).RowsAffected == 1
+}
+
+// UseRecoveryCode removes the hash matching code from the user's list and
+// reports whether it did. The write is keyed on the list as it was read (its
+// JSON, byte for byte what the serializer stored), so it is the same
+// compare-and-set as ConsumeTOTPStep: a code presented twice at once is
+// removed once, the loser sees no row updated and is told the code is invalid.
+// Only this column is written, so it cannot clobber a concurrent TOTP step.
+// ponytail: two *different* codes used in the same instant also lose one;
+// the losing code is not consumed, its owner just retries.
+func (u *userService) UseRecoveryCode(id int, code string) bool {
+	user := u.GetUserAllInfoById(strconv.Itoa(id))
+	remaining, ok := ConsumeRecoveryCode(user.RecoveryCodes, code)
+	if !ok {
+		return false
+	}
+	prev, _ := json.Marshal(user.RecoveryCodes)
+	return u.db.Model(&model.UserDBModel{Id: id}).Select("recovery_codes").Where("recovery_codes = ?", string(prev)).Updates(&model.UserDBModel{RecoveryCodes: remaining}).RowsAffected == 1
 }
 
 func (u *userService) UpdateUserPassword(m model.UserDBModel) {

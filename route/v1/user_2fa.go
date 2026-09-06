@@ -74,21 +74,19 @@ func PostUser2FAVerify(ctx echo.Context) error {
 	code, recovery := json["code"], json["recovery_code"]
 	switch {
 	case code != "" && recovery == "":
+		// VerifyTOTP checks the step against the row as read; ConsumeTOTPStep
+		// is the atomic check, so a code replayed concurrently passes once.
 		step, valid := service.VerifyTOTP(user.TotpSecret, code, user.TotpLastStep, time.Now())
-		if !valid {
+		if !valid || !service.MyService.User().ConsumeTOTPStep(user.Id, step) {
 			return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_CODE_INVALID)
 		}
-		user.TotpLastStep = step
 	case recovery != "" && code == "":
-		remaining, valid := service.ConsumeRecoveryCode(user.RecoveryCodes, recovery)
-		if !valid {
+		if !service.MyService.User().UseRecoveryCode(user.Id, recovery) {
 			return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_CODE_INVALID)
 		}
-		user.RecoveryCodes = remaining
 	default:
 		return fail(ctx, common_err.CLIENT_ERROR, common_err.INVALID_PARAMS)
 	}
-	service.MyService.User().UpdateUserTOTP(user)
 	return issueTokens(ctx, user)
 }
 
