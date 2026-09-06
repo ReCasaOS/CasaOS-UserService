@@ -128,8 +128,11 @@ func (u *userService) GetKeyPair() (*ecdsa.PrivateKey, *ecdsa.PublicKey) {
 	return u.privateKey, u.publicKey
 }
 
+// PreAuthTTL bounds the window between the password and the second factor.
+const PreAuthTTL = 5 * time.Minute
+
 func (u *userService) IssuePreAuthToken(m model.UserDBModel) (string, error) {
-	return jwt.GenerateToken(m.Username, u.preAuthPriv, m.Id, "2fa", 5*time.Minute)
+	return jwt.GenerateToken(m.Username, u.preAuthPriv, m.Id, "2fa", PreAuthTTL)
 }
 
 func (u *userService) ParsePreAuthToken(token string) (*jwt.Claims, error) {

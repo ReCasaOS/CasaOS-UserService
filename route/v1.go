@@ -30,6 +30,7 @@ func InitRouter() http.Handler {
 
 	e.POST("/v1/users/register", v1.PostUserRegister)
 	e.POST("/v1/users/login", v1.PostUserLogin)
+	e.POST("/v1/users/2fa/verify", v1.PostUser2FAVerify)
 	e.GET("/v1/users/name", v1.GetUserAllUsername) // all/name
 	e.POST("/v1/users/refresh", v1.PostUserRefreshToken)
 	// No short-term modifications
@@ -73,6 +74,10 @@ func InitRouter() http.Handler {
 		v1UsersGroup.GET("/current", v1.GetUserInfo)
 		v1UsersGroup.PUT("/current", v1.PutUserInfo)
 		v1UsersGroup.PUT("/current/password", v1.PutUserPassword)
+
+		v1UsersGroup.POST("/2fa/setup", v1.PostUser2FASetup)
+		v1UsersGroup.POST("/2fa/enable", v1.PostUser2FAEnable)
+		v1UsersGroup.POST("/2fa/disable", v1.PostUser2FADisable)
 
 		v1UsersGroup.GET("/current/custom/:key", v1.GetUserCustomConf)
 		v1UsersGroup.POST("/current/custom/:key", v1.PostUserCustomConf)

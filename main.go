@@ -91,7 +91,10 @@ func init() {
 		password := random.RandomString(6, false)
 		userData.Password = encryption.GetMD5ByStr(password)
 		service.MyService.User().UpdateUserPassword(userData)
-		fmt.Println("User reset successful")
+		// The shell is the way back in when the authenticator and the recovery codes are both lost.
+		userData.TotpSecret, userData.TotpEnabled, userData.TotpLastStep, userData.RecoveryCodes = "", false, 0, nil
+		service.MyService.User().UpdateUserTOTP(userData)
+		fmt.Println("User reset successful, two-factor authentication disabled")
 		fmt.Println("UserName:" + userData.Username)
 		fmt.Println("Password:" + password)
 	}

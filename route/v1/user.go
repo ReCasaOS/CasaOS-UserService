@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/subtle"
 	"encoding/base64"
 	json2 "encoding/json"
 	"image"
@@ -83,6 +84,11 @@ func PostUserRegister(ctx echo.Context) error {
 
 var limiter = rate.NewLimiter(rate.Every(time.Minute), 5)
 
+// passwordMatches compares the stored MD5 hex with the candidate in constant time.
+func passwordMatches(stored, candidate string) bool {
+	return subtle.ConstantTimeCompare([]byte(stored), []byte(encryption.GetMD5ByStr(candidate))) == 1
+}
+
 // @Summary login
 // @Produce  application/json
 // @Accept application/json
@@ -119,11 +125,30 @@ func PostUserLogin(ctx echo.Context) error {
 		return ctx.JSON(common_err.CLIENT_ERROR,
 			model.Result{Success: common_err.USER_NOT_EXIST, Message: common_err.GetMsg(common_err.USER_NOT_EXIST)})
 	}
-	if user.Password != encryption.GetMD5ByStr(password) {
+	if !passwordMatches(user.Password, password) {
 		return ctx.JSON(common_err.CLIENT_ERROR,
 			model.Result{Success: common_err.USER_NOT_EXIST_OR_PWD_INVALID, Message: common_err.GetMsg(common_err.USER_NOT_EXIST_OR_PWD_INVALID)})
 	}
 
+	if user.TotpEnabled {
+		preAuth, err := service.MyService.User().IssuePreAuthToken(user)
+		if err != nil {
+			return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
+		}
+		return ctx.JSON(common_err.SUCCESS,
+			model.Result{
+				Success: common.TWO_FA_REQUIRED,
+				Message: common.GetMsg(common.TWO_FA_REQUIRED),
+				Data:    map[string]interface{}{"pre_auth_token": preAuth, "expires_at": time.Now().Add(service.PreAuthTTL).Unix()},
+			})
+	}
+
+	return issueTokens(ctx, user)
+}
+
+// issueTokens mints the access and refresh tokens and builds the login body;
+// shared by /login (2FA off) and /2fa/verify (2FA on).
+func issueTokens(ctx echo.Context, user model2.UserDBModel) error {
 	privateKey, _ := service.MyService.User().GetKeyPair()
 
 	token := system_model.VerifyInformation{}
@@ -309,7 +334,7 @@ func PutUserPassword(ctx echo.Context) error {
 		return ctx.JSON(common_err.SERVICE_ERROR,
 			model.Result{Success: common_err.USER_NOT_EXIST, Message: common_err.GetMsg(common_err.USER_NOT_EXIST)})
 	}
-	if user.Password != encryption.GetMD5ByStr(oldPwd) {
+	if !passwordMatches(user.Password, oldPwd) {
 		return ctx.JSON(common_err.CLIENT_ERROR, model.Result{Success: common_err.PWD_INVALID_OLD, Message: common_err.GetMsg(common_err.PWD_INVALID_OLD)})
 	}
 	user.Password = encryption.GetMD5ByStr(pwd)
