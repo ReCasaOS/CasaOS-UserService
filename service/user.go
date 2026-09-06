@@ -40,6 +40,7 @@ type UserService interface {
 	GetUserInfoByUserName(userName string) (m model.UserDBModel)
 	GetAllUserName() (list []model.UserDBModel)
 	UpdateUserTOTP(m model.UserDBModel)
+	EnableUserTOTP(id int, secret string, step int64, hashes []string) bool
 	ConsumeTOTPStep(id int, step int64) bool
 	UseRecoveryCode(id int, code string) bool
 
@@ -94,6 +95,15 @@ func (u *userService) UpdateUser(m model.UserDBModel) {
 // alone skips false/0/"" and could never disable.
 func (u *userService) UpdateUserTOTP(m model.UserDBModel) {
 	u.db.Model(&m).Select("totp_secret", "totp_enabled", "totp_last_step", "recovery_codes").Updates(&m)
+}
+
+// EnableUserTOTP turns the pending secret on, recording the enrolment step
+// and the recovery-code hashes, and reports whether it did. The write is
+// keyed on the row being still disabled with that very secret, so of two
+// enable requests released together exactly one wins and the recovery codes
+// it returned are the ones in the row; the loser updates nothing.
+func (u *userService) EnableUserTOTP(id int, secret string, step int64, hashes []string) bool {
+	return u.db.Model(&model.UserDBModel{Id: id}).Select("totp_enabled", "totp_last_step", "recovery_codes").Where("totp_enabled = ? AND totp_secret = ?", false, secret).Updates(&model.UserDBModel{TotpEnabled: true, TotpLastStep: step, RecoveryCodes: hashes}).RowsAffected == 1
 }
 
 // ConsumeTOTPStep records step as the last accepted one and reports whether

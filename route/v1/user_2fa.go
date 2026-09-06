@@ -151,9 +151,14 @@ func PostUser2FAEnable(ctx echo.Context) error {
 	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
 	}
-	// The enrolment step is recorded so that code cannot be replayed at first login.
-	user.TotpEnabled, user.TotpLastStep, user.RecoveryCodes = true, step, hashes
-	service.MyService.User().UpdateUserTOTP(user)
+	// The enrolment step is recorded so that code cannot be replayed at first
+	// login. EnableUserTOTP is a compare-and-set on the pending secret: of two
+	// requests carrying the same code, one enables and gets its codes stored,
+	// the other is told 2FA is already enabled (also what a login that cleared
+	// the pending secret in between looks like: the setup is over either way).
+	if !service.MyService.User().EnableUserTOTP(user.Id, user.TotpSecret, step, hashes) {
+		return fail(ctx, common_err.CLIENT_ERROR, common.TWO_FA_ALREADY_ENABLED)
+	}
 	return ok(ctx, map[string][]string{"recovery_codes": plain})
 }
 

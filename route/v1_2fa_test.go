@@ -21,6 +21,7 @@ import (
 	model2 "github.com/IceWhaleTech/CasaOS-UserService/service/model"
 	"github.com/glebarez/sqlite"
 	"github.com/pquerna/otp/totp"
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/time/rate"
 	"gorm.io/gorm"
 )
@@ -275,21 +276,19 @@ func TestTwoFactorFlow(t *testing.T) {
 	login()
 }
 
-// TestReplayRace fires the same code twice at once and checks that the
-// persistence layer lets exactly one request through: the replay guard is
-// a conditional UPDATE, not a read-check-write in the handler.
+// TestReplayRace fires the same request several times at once and checks
+// that the persistence layer lets exactly one through: enabling, the replay
+// guard and the recovery-code removal are conditional UPDATEs, not
+// read-check-writes in the handler.
 func TestReplayRace(t *testing.T) {
 	users, c := newRig(t)
 	const password = "correct horse"
 	user := users.CreateUser(model2.UserDBModel{Username: "alice", Password: encryption.GetMD5ByStr(password), Role: "admin"})
 	access, _ := tokens(t, c.expect(200, 200, "POST", "/v1/users/login", "", map[string]string{"username": "alice", "password": password}))
-	secret, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": password})["secret"].(string)
-	enabled := c.expect(200, 200, "POST", "/v1/users/2fa/enable", access, map[string]string{"code": codeAt(t, secret, time.Now())})
-	recovery, _ := enabled["recovery_codes"].([]interface{})[0].(string)
-	pre, _ := c.expect(200, 10014, "POST", "/v1/users/login", "", map[string]string{"username": "alice", "password": password})["pre_auth_token"].(string)
 
-	// race sends body from n goroutines released together and counts the 200s.
-	race := func(n int, body map[string]string) (okCount, invalidCount int) {
+	// race sends body from n goroutines released together, counts the 200s and
+	// the refusals carrying code refused, and returns the data of the last 200.
+	race := func(n int, path, token string, body map[string]string, refused int) (okCount, refusedCount int, okData map[string]interface{}) {
 		t.Helper()
 		var mu sync.Mutex
 		var wg sync.WaitGroup
@@ -299,16 +298,17 @@ func TestReplayRace(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				status, res := c.do("POST", "/v1/users/2fa/verify", "", body)
+				status, res := c.do("POST", path, token, body)
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
 				case status == 200 && res.Success == 200:
 					okCount++
-				case status == 400 && res.Success == 10015:
-					invalidCount++
+					okData = res.Data
+				case status == 400 && res.Success == refused:
+					refusedCount++
 				default:
-					t.Errorf("unexpected %d/%d", status, res.Success)
+					t.Errorf("%s: unexpected %d/%d", path, status, res.Success)
 				}
 			}()
 		}
@@ -317,12 +317,32 @@ func TestReplayRace(t *testing.T) {
 		return
 	}
 
-	code := codeAt(t, secret, time.Now().Add(30*time.Second)) // the enrolment step is spent
-	if ok, bad := race(4, map[string]string{"pre_auth_token": pre, "code": code}); ok != 1 || bad != 3 {
-		t.Fatalf("TOTP code accepted %d times (%d refused), want exactly once", ok, bad)
+	// Enable: one request enables, the others are told it already is, and the
+	// recovery codes of the 200 are the ones in the row.
+	secret, _ := c.expect(200, 200, "POST", "/v1/users/2fa/setup", access, map[string]string{"password": password})["secret"].(string)
+	okCount, bad, enabled := race(4, "/v1/users/2fa/enable", access, map[string]string{"code": codeAt(t, secret, time.Now())}, 10016)
+	if okCount != 1 || bad != 3 {
+		t.Fatalf("enable succeeded %d times (%d refused), want exactly once", okCount, bad)
 	}
-	if ok, bad := race(4, map[string]string{"pre_auth_token": pre, "recovery_code": recovery}); ok != 1 || bad != 3 {
-		t.Fatalf("recovery code accepted %d times (%d refused), want exactly once", ok, bad)
+	plain, _ := enabled["recovery_codes"].([]interface{})
+	row := users.GetUserAllInfoById(strconv.Itoa(user.Id))
+	if !row.TotpEnabled || len(plain) != 8 || len(row.RecoveryCodes) != 8 {
+		t.Fatalf("row after enable: enabled=%v, %d codes returned, %d stored", row.TotpEnabled, len(plain), len(row.RecoveryCodes))
+	}
+	for i, p := range plain {
+		if bcrypt.CompareHashAndPassword([]byte(row.RecoveryCodes[i]), []byte(strings.ReplaceAll(p.(string), "-", ""))) != nil {
+			t.Fatalf("recovery code %d of the 200 response is not the one stored", i)
+		}
+	}
+	recovery, _ := plain[0].(string)
+	pre, _ := c.expect(200, 10014, "POST", "/v1/users/login", "", map[string]string{"username": "alice", "password": password})["pre_auth_token"].(string)
+
+	code := codeAt(t, secret, time.Now().Add(30*time.Second)) // the enrolment step is spent
+	if okCount, bad, _ := race(4, "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": pre, "code": code}, 10015); okCount != 1 || bad != 3 {
+		t.Fatalf("TOTP code accepted %d times (%d refused), want exactly once", okCount, bad)
+	}
+	if okCount, bad, _ := race(4, "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": pre, "recovery_code": recovery}, 10015); okCount != 1 || bad != 3 {
+		t.Fatalf("recovery code accepted %d times (%d refused), want exactly once", okCount, bad)
 	}
 
 	// The same guarantee, sequentially, at the service layer the handler relies on.
@@ -330,12 +350,15 @@ func TestReplayRace(t *testing.T) {
 	if !users.ConsumeTOTPStep(user.Id, step) || users.ConsumeTOTPStep(user.Id, step) || users.ConsumeTOTPStep(user.Id, step-1) {
 		t.Fatal("ConsumeTOTPStep must accept a step once and never an older one")
 	}
-	other, _ := enabled["recovery_codes"].([]interface{})[1].(string)
+	other, _ := plain[1].(string)
 	if !users.UseRecoveryCode(user.Id, other) || users.UseRecoveryCode(user.Id, other) || users.UseRecoveryCode(user.Id, recovery) {
 		t.Fatal("UseRecoveryCode must consume a code once")
 	}
 	if got := len(users.GetUserAllInfoById(strconv.Itoa(user.Id)).RecoveryCodes); got != 6 {
 		t.Fatalf("want 6 recovery codes left, got %d", got)
+	}
+	if users.EnableUserTOTP(user.Id, secret, step+1, nil) {
+		t.Fatal("EnableUserTOTP must not touch an enabled row")
 	}
 }
 
