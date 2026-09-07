@@ -7,13 +7,13 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/deepmap/oapi-codegen/pkg/middleware"
+	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/inkly/CasaOS-Common/utils/jwt"
 	codegen "github.com/inkly/CasaOS-UserService/codegen/user_service"
 	v2 "github.com/inkly/CasaOS-UserService/route/v2"
 	"github.com/inkly/CasaOS-UserService/service"
-	"github.com/deepmap/oapi-codegen/pkg/middleware"
-	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/labstack/echo/v4"
 	echo_middleware "github.com/labstack/echo/v4/middleware"
 )

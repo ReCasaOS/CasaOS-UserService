@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"github.com/inkly/CasaOS-Common/external"
 	"github.com/inkly/CasaOS-UserService/codegen/message_bus"
 	"github.com/inkly/CasaOS-UserService/pkg/utils/encryption"
@@ -19,7 +20,6 @@ import (
 	v1 "github.com/inkly/CasaOS-UserService/route/v1"
 	"github.com/inkly/CasaOS-UserService/service"
 	model2 "github.com/inkly/CasaOS-UserService/service/model"
-	"github.com/glebarez/sqlite"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/time/rate"

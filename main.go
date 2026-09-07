@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coreos/go-systemd/daemon"
 	"github.com/inkly/CasaOS-Common/external"
 	"github.com/inkly/CasaOS-Common/model"
 	util_http "github.com/inkly/CasaOS-Common/utils/http"
@@ -27,7 +28,6 @@ import (
 	"github.com/inkly/CasaOS-UserService/pkg/utils/random"
 	"github.com/inkly/CasaOS-UserService/route"
 	"github.com/inkly/CasaOS-UserService/service"
-	"github.com/coreos/go-systemd/daemon"
 	"go.uber.org/zap"
 )
 

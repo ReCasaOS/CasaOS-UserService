@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	model2 "github.com/inkly/CasaOS-UserService/service/model"
 	"github.com/glebarez/sqlite"
+	model2 "github.com/inkly/CasaOS-UserService/service/model"
 	"gorm.io/gorm"
 )
 

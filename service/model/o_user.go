@@ -11,7 +11,7 @@ package model
 
 import "time"
 
-//Soon to be removed
+// Soon to be removed
 type UserDBModel struct {
 	Id          int       `gorm:"column:id;primary_key" json:"id"`
 	Username    string    `json:"username"`
@@ -31,7 +31,7 @@ type UserDBModel struct {
 	// row, and PUT /v1/users/current binds the request body into this struct.
 	TotpSecret    string   `gorm:"default:''" json:"-"`
 	TotpEnabled   bool     `gorm:"default:false" json:"totp_enabled"`
-	TotpLastStep  int64    `gorm:"default:0" json:"-"`      // last accepted 30 s step (replay guard)
+	TotpLastStep  int64    `gorm:"default:0" json:"-"`       // last accepted 30 s step (replay guard)
 	RecoveryCodes []string `gorm:"serializer:json" json:"-"` // bcrypt hashes, removed as consumed
 }
 
