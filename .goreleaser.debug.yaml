@@ -179,7 +179,7 @@ changelog:
       - "^test:"
 release:
   github:
-    owner: IceWhaleTech
+    owner: inkly
     name: CasaOS-UserService
   draft: true
   prerelease: auto
