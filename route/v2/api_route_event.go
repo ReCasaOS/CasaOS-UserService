@@ -3,8 +3,8 @@ package v2
 import (
 	"net/http"
 
-	codegen "github.com/IceWhaleTech/CasaOS-UserService/codegen/user_service"
-	"github.com/IceWhaleTech/CasaOS-UserService/service"
+	codegen "github.com/inkly/CasaOS-UserService/codegen/user_service"
+	"github.com/inkly/CasaOS-UserService/service"
 	"github.com/labstack/echo/v4"
 )
 

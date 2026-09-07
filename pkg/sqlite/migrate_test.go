@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	model2 "github.com/IceWhaleTech/CasaOS-UserService/service/model"
+	model2 "github.com/inkly/CasaOS-UserService/service/model"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )

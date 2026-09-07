@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IceWhaleTech/CasaOS-Common/utils/logger"
-	"github.com/IceWhaleTech/CasaOS-UserService/service/model"
+	"github.com/inkly/CasaOS-Common/utils/logger"
+	"github.com/inkly/CasaOS-UserService/service/model"
 	"github.com/glebarez/sqlite"
 	"github.com/pquerna/otp/totp"
 	"gorm.io/gorm"

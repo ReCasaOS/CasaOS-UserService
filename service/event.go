@@ -3,7 +3,7 @@ package service
 import (
 	"encoding/json"
 
-	"github.com/IceWhaleTech/CasaOS-UserService/model"
+	"github.com/inkly/CasaOS-UserService/model"
 	"gorm.io/gorm"
 )
 
