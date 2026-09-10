@@ -18,9 +18,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/inkly/CasaOS-Common/utils/jwt"
-	"github.com/inkly/CasaOS-Common/utils/logger"
-	"github.com/inkly/CasaOS-UserService/service/model"
+	"github.com/ReCasaOS/CasaOS-Common/utils/jwt"
+	"github.com/ReCasaOS/CasaOS-Common/utils/logger"
+	"github.com/ReCasaOS/CasaOS-UserService/service/model"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )

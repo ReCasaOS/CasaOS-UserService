@@ -1,13 +1,13 @@
-module github.com/inkly/CasaOS-UserService
+module github.com/ReCasaOS/CasaOS-UserService
 
 go 1.21
 
 require (
+	github.com/ReCasaOS/CasaOS-Common v0.4.23
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf
 	github.com/deepmap/oapi-codegen v1.12.4
 	github.com/getkin/kin-openapi v0.117.0
 	github.com/glebarez/sqlite v1.8.0
-	github.com/inkly/CasaOS-Common v0.4.22
 	github.com/labstack/echo/v4 v4.12.0
 	github.com/pquerna/otp v1.5.0
 	github.com/satori/go.uuid v1.2.0

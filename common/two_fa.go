@@ -1,6 +1,6 @@
 package common
 
-import "github.com/inkly/CasaOS-Common/utils/common_err"
+import "github.com/ReCasaOS/CasaOS-Common/utils/common_err"
 
 // Result codes for two-factor authentication; the user block in Common ends at 10013.
 const (

@@ -1,5 +1,5 @@
 //go:generate bash -c "mkdir -p codegen/user_service && go run github.com/deepmap/oapi-codegen/cmd/oapi-codegen@v1.12.4 -generate types,server,spec -package codegen api/user-service/openapi.yaml > codegen/user_service/user_service_api.go"
-//go:generate bash -c "mkdir -p codegen/message_bus && go run github.com/deepmap/oapi-codegen/cmd/oapi-codegen@v1.12.4 -package message_bus https://raw.githubusercontent.com/inkly/CasaOS-MessageBus/v0.4.19/api/message_bus/openapi.yaml > codegen/message_bus/api.go"
+//go:generate bash -c "mkdir -p codegen/message_bus && go run github.com/deepmap/oapi-codegen/cmd/oapi-codegen@v1.12.4 -package message_bus https://raw.githubusercontent.com/ReCasaOS/CasaOS-MessageBus/v0.4.19/api/message_bus/openapi.yaml > codegen/message_bus/api.go"
 package main
 
 import (
@@ -14,20 +14,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ReCasaOS/CasaOS-Common/external"
+	"github.com/ReCasaOS/CasaOS-Common/model"
+	util_http "github.com/ReCasaOS/CasaOS-Common/utils/http"
+	"github.com/ReCasaOS/CasaOS-Common/utils/jwt"
+	"github.com/ReCasaOS/CasaOS-Common/utils/logger"
+	"github.com/ReCasaOS/CasaOS-UserService/codegen/message_bus"
+	"github.com/ReCasaOS/CasaOS-UserService/common"
+	"github.com/ReCasaOS/CasaOS-UserService/pkg/config"
+	"github.com/ReCasaOS/CasaOS-UserService/pkg/sqlite"
+	"github.com/ReCasaOS/CasaOS-UserService/pkg/utils/encryption"
+	"github.com/ReCasaOS/CasaOS-UserService/pkg/utils/random"
+	"github.com/ReCasaOS/CasaOS-UserService/route"
+	"github.com/ReCasaOS/CasaOS-UserService/service"
 	"github.com/coreos/go-systemd/daemon"
-	"github.com/inkly/CasaOS-Common/external"
-	"github.com/inkly/CasaOS-Common/model"
-	util_http "github.com/inkly/CasaOS-Common/utils/http"
-	"github.com/inkly/CasaOS-Common/utils/jwt"
-	"github.com/inkly/CasaOS-Common/utils/logger"
-	"github.com/inkly/CasaOS-UserService/codegen/message_bus"
-	"github.com/inkly/CasaOS-UserService/common"
-	"github.com/inkly/CasaOS-UserService/pkg/config"
-	"github.com/inkly/CasaOS-UserService/pkg/sqlite"
-	"github.com/inkly/CasaOS-UserService/pkg/utils/encryption"
-	"github.com/inkly/CasaOS-UserService/pkg/utils/random"
-	"github.com/inkly/CasaOS-UserService/route"
-	"github.com/inkly/CasaOS-UserService/service"
 	"go.uber.org/zap"
 )
 

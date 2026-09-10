@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/inkly/CasaOS-Common/external"
-	"github.com/inkly/CasaOS-Common/utils/logger"
-	message_bus "github.com/inkly/CasaOS-UserService/codegen/message_bus"
-	"github.com/inkly/CasaOS-UserService/model"
-	"github.com/inkly/CasaOS-UserService/pkg/config"
-	"github.com/inkly/CasaOS-UserService/service"
+	"github.com/ReCasaOS/CasaOS-Common/external"
+	"github.com/ReCasaOS/CasaOS-Common/utils/logger"
+	message_bus "github.com/ReCasaOS/CasaOS-UserService/codegen/message_bus"
+	"github.com/ReCasaOS/CasaOS-UserService/model"
+	"github.com/ReCasaOS/CasaOS-UserService/pkg/config"
+	"github.com/ReCasaOS/CasaOS-UserService/service"
 	"go.uber.org/zap"
 	"golang.org/x/net/websocket"
 )

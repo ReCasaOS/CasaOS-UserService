@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/inkly/CasaOS-Common/utils/jwt"
-	v1 "github.com/inkly/CasaOS-UserService/route/v1"
-	"github.com/inkly/CasaOS-UserService/service"
+	"github.com/ReCasaOS/CasaOS-Common/utils/jwt"
+	v1 "github.com/ReCasaOS/CasaOS-UserService/route/v1"
+	"github.com/ReCasaOS/CasaOS-UserService/service"
 	"github.com/labstack/echo/v4"
 	echo_middleware "github.com/labstack/echo/v4/middleware"
 )

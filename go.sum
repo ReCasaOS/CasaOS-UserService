@@ -1,4 +1,6 @@
 github.com/RaveNoX/go-jsoncommentstrip v1.0.0/go.mod h1:78ihd09MekBnJnxpICcwzCMzGrKSKYe4AqU6PDYYpjk=
+github.com/ReCasaOS/CasaOS-Common v0.4.23 h1:UhoFpg2mWkCOEefETETmtRga1KfDErqYnRUHps6eR2M=
+github.com/ReCasaOS/CasaOS-Common v0.4.23/go.mod h1:0B3ukaWFZnO1n17QZx838MuTwxwxdHegJEJvJydADJs=
 github.com/apapsch/go-jsonmerge/v2 v2.0.0 h1:axGnT1gRIfimI7gJifB699GoE/oq+F2MU7Dml6nw9rQ=
 github.com/apapsch/go-jsonmerge/v2 v2.0.0/go.mod h1:lvDnEdqiQrp0O42VQGgmlKpxL1AP2+08jFMw88y4klk=
 github.com/benbjohnson/clock v1.3.1 h1:Heo0FGXzOxUHquZbraxt+tT7UXVDhesUQH5ISbsOkCQ=
@@ -73,8 +75,6 @@ github.com/google/uuid v1.5.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+
 github.com/gorilla/mux v1.8.0 h1:i40aqfkR1h2SlN9hojwV5ZA91wcXFOvkdNIeFDP5koI=
 github.com/gorilla/mux v1.8.0/go.mod h1:DVbg23sWSpFRCP0SfiEN6jmj59UnW/n46BH5rLB71So=
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=
-github.com/inkly/CasaOS-Common v0.4.22 h1:uyNZrHELRznNHotr5S7FGZrv2OdbtiEbFrJSjqxA1F4=
-github.com/inkly/CasaOS-Common v0.4.22/go.mod h1:sQ6BywHKpH/3eDWNJMll4okLOyvnKL9apWM1Ym+ws/A=
 github.com/invopop/yaml v0.1.0/go.mod h1:2XuRLgs/ouIrW3XNzuNj7J3Nvu/Dig5MXvbCEdiBN3Q=
 github.com/invopop/yaml v0.2.0 h1:7zky/qH+O0DwAyoobXUqvVBwgBFRxKoQ/3FjcVpjTMY=
 github.com/invopop/yaml v0.2.0/go.mod h1:2XuRLgs/ouIrW3XNzuNj7J3Nvu/Dig5MXvbCEdiBN3Q=

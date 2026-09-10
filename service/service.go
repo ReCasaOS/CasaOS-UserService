@@ -1,9 +1,9 @@
 package service
 
 import (
-	"github.com/inkly/CasaOS-Common/external"
-	"github.com/inkly/CasaOS-UserService/codegen/message_bus"
-	"github.com/inkly/CasaOS-UserService/pkg/config"
+	"github.com/ReCasaOS/CasaOS-Common/external"
+	"github.com/ReCasaOS/CasaOS-UserService/codegen/message_bus"
+	"github.com/ReCasaOS/CasaOS-UserService/pkg/config"
 	"gorm.io/gorm"
 )
 

@@ -6,14 +6,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/inkly/CasaOS-Common/utils/common_err"
-	"github.com/inkly/CasaOS-UserService/common"
-	"github.com/inkly/CasaOS-UserService/model"
+	"github.com/ReCasaOS/CasaOS-Common/utils/common_err"
+	"github.com/ReCasaOS/CasaOS-UserService/common"
+	"github.com/ReCasaOS/CasaOS-UserService/model"
 	"github.com/labstack/echo/v4"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/time/rate"
 
-	"github.com/inkly/CasaOS-UserService/service"
+	"github.com/ReCasaOS/CasaOS-UserService/service"
 )
 
 // Per-user limiter for second-factor and password checks: burst 5, refill
