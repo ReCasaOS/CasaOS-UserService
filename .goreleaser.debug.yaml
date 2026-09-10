@@ -179,7 +179,7 @@ changelog:
       - "^test:"
 release:
   github:
-    owner: inkly
+    owner: ReCasaOS
     name: CasaOS-UserService
   draft: true
   prerelease: auto

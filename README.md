@@ -1,12 +1,12 @@
 # CasaOS-UserService
 
-> **Not affiliated with IceWhale.** An independent, community-maintained distribution of CasaOS, not produced or endorsed by Shanghai IceWhale Technology Limited. CASAOS is their trademark, used here only to say what this is a release of. The original project is [IceWhaleTech/CasaOS](https://github.com/IceWhaleTech/CasaOS); report problems with this distribution at [inkly/CasaOS/issues](https://github.com/inkly/CasaOS/issues).
+> **Not affiliated with IceWhale.** An independent, community-maintained distribution of CasaOS, not produced or endorsed by Shanghai IceWhale Technology Limited. CASAOS is their trademark, used here only to say what this is a release of. The original project is [IceWhaleTech/CasaOS](https://github.com/IceWhaleTech/CasaOS); report problems with this distribution at [inkly/CasaOS/issues](https://github.com/ReCasaOS/CasaOS/issues).
 
 The account service of CasaOS. It owns the single administrator account, issues and refreshes the JWTs the other services trust, and serves the avatar and per-user settings the dashboard reads. This repository is part of the **inkly distribution of CasaOS**, a maintained release of the project after upstream [IceWhaleTech/CasaOS](https://github.com/IceWhaleTech/CasaOS) stopped shipping in 2025, and it descends from [alvins82's fork](https://github.com/alvins82/CasaOS-UserService).
 
 ## What it does
 
-The service listens on a random loopback port and registers `/v1/users`, `/v2/users`, its API documentation and `/.well-known/jwks.json` with [CasaOS-Gateway](https://github.com/inkly/CasaOS-Gateway), which is what a browser actually reaches. Its own address is written to `/var/run/casaos/user-service.url` for the other services.
+The service listens on a random loopback port and registers `/v1/users`, `/v2/users`, its API documentation and `/.well-known/jwks.json` with [CasaOS-Gateway](https://github.com/ReCasaOS/CasaOS-Gateway), which is what a browser actually reaches. Its own address is written to `/var/run/casaos/user-service.url` for the other services.
 
 At startup it generates an ECDSA key pair in memory and never writes it anywhere. The private key signs access and refresh tokens; the public key is published as a JWKS document, so the other services verify a token without calling this one. Restarting the service invalidates every token it has issued.
 
@@ -42,10 +42,10 @@ Enrolment needs the password on top of the session, as disabling needs a code or
 Components are not installed individually. The whole distribution is installed and upgraded with one command:
 
 ```sh
-curl -fsSL https://github.com/inkly/CasaOS-Install/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/ReCasaOS/CasaOS-Install/releases/latest/download/install.sh | sudo bash
 ```
 
-What a release contains, and how it is built, is described in [CasaOS-Install](https://github.com/inkly/CasaOS-Install#readme).
+What a release contains, and how it is built, is described in [CasaOS-Install](https://github.com/ReCasaOS/CasaOS-Install#readme).
 
 ## What this fork changed
 
