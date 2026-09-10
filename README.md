@@ -1,8 +1,8 @@
 # CasaOS-UserService
 
-> **Not affiliated with IceWhale.** An independent, community-maintained distribution of CasaOS, not produced or endorsed by Shanghai IceWhale Technology Limited. CASAOS is their trademark, used here only to say what this is a release of. The original project is [IceWhaleTech/CasaOS](https://github.com/IceWhaleTech/CasaOS); report problems with this distribution at [inkly/CasaOS/issues](https://github.com/ReCasaOS/CasaOS/issues).
+> **Not affiliated with IceWhale.** An independent, community-maintained distribution of CasaOS, not produced or endorsed by Shanghai IceWhale Technology Limited. CASAOS is their trademark, used here only to say what this is a release of. The original project is [IceWhaleTech/CasaOS](https://github.com/IceWhaleTech/CasaOS); report problems with this distribution at [ReCasaOS/CasaOS/issues](https://github.com/ReCasaOS/CasaOS/issues).
 
-The account service of CasaOS. It owns the single administrator account, issues and refreshes the JWTs the other services trust, and serves the avatar and per-user settings the dashboard reads. This repository is part of the **inkly distribution of CasaOS**, a maintained release of the project after upstream [IceWhaleTech/CasaOS](https://github.com/IceWhaleTech/CasaOS) stopped shipping in 2025, and it descends from [alvins82's fork](https://github.com/alvins82/CasaOS-UserService).
+The account service of CasaOS. It owns the single administrator account, issues and refreshes the JWTs the other services trust, and serves the avatar and per-user settings the dashboard reads. This repository is part of **ReCasaOS**, a maintained release of the project after upstream [IceWhaleTech/CasaOS](https://github.com/IceWhaleTech/CasaOS) stopped shipping in 2025, and it descends from [alvins82's fork](https://github.com/alvins82/CasaOS-UserService).
 
 ## What it does
 
