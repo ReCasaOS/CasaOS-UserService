@@ -5,9 +5,12 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/ReCasaOS/CasaOS-Common/external"
 	"github.com/ReCasaOS/CasaOS-Common/utils/jwt"
+	"github.com/ReCasaOS/CasaOS-UserService/pkg/config"
 	v1 "github.com/ReCasaOS/CasaOS-UserService/route/v1"
 	"github.com/ReCasaOS/CasaOS-UserService/service"
+	echojwt "github.com/labstack/echo-jwt/v4"
 	"github.com/labstack/echo/v4"
 	echo_middleware "github.com/labstack/echo/v4/middleware"
 )
@@ -41,11 +44,11 @@ func InitRouter() http.Handler {
 	v1Group := e.Group("/v1")
 
 	v1UsersGroup := v1Group.Group("/users")
-	v1UsersGroup.Use(echo_middleware.JWTWithConfig(echo_middleware.JWTConfig{
+	v1UsersGroup.Use(echojwt.WithConfig(echojwt.Config{
 		Skipper: func(c echo.Context) bool {
-			return c.RealIP() == "::1" || c.RealIP() == "127.0.0.1"
+			return external.IsInternalRequest(c.RealIP(), c.Request().Header.Get(echo.HeaderAuthorization), config.CommonInfo.RuntimePath)
 		},
-		ParseTokenFunc: func(token string, c echo.Context) (interface{}, error) {
+		ParseTokenFunc: func(c echo.Context, token string) (interface{}, error) {
 			valid, claims, err := jwt.Validate(
 				token,
 				func() (*ecdsa.PublicKey, error) {
