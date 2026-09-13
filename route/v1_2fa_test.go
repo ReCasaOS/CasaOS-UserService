@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -128,7 +129,7 @@ func newRig(t *testing.T) (service.UserService, client) {
 	if err := db.AutoMigrate(&model2.UserDBModel{}); err != nil {
 		t.Fatal(err)
 	}
-	users := service.NewUserService(db)
+	users := service.NewUserService(db, filepath.Join(t.TempDir(), "user-service.key"))
 	service.MyService = fakeRepo{user: users}
 	v1.LoginLimiter.SetLimit(rate.Inf)
 	v1.UserLimit = rate.Inf

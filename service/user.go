@@ -229,12 +229,12 @@ func (u *userService) ParsePreAuthToken(token string) (*jwt.Claims, error) {
 	return claims, nil
 }
 
-// 获取用户Service
-func NewUserService(db *gorm.DB) UserService {
-	// DO NOT store private key anywhere - keep it in memory ONLY!!!
-	privateKey, publicKey, err := jwt.GenerateKeyPair()
+// NewUserService signs with the key kept at keyPath (user_key.go), and with
+// a key made here and now for the pre-auth window.
+func NewUserService(db *gorm.DB, keyPath string) UserService {
+	privateKey, publicKey, err := loadOrCreateKeyPair(keyPath)
 	if err != nil {
-		logger.Error("failed to generate key pair for JWT", zap.Error(err))
+		logger.Error("failed to load or make the key pair for JWT", zap.Error(err), zap.String("path", keyPath))
 		return nil
 	}
 	preAuthPriv, preAuthPub, err := jwt.GenerateKeyPair()

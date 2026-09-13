@@ -1,6 +1,7 @@
 package service
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -110,7 +111,7 @@ func TestCompareAndSetFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := NewUserService(db)
+	u := NewUserService(db, filepath.Join(t.TempDir(), "user-service.key"))
 	user := u.CreateUser(model.UserDBModel{Username: "erin", TotpSecret: "S", TotpEnabled: true, RecoveryCodes: hashes})
 	sqlDB, _ := db.DB()
 	sqlDB.Close()

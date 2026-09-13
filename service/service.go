@@ -1,6 +1,8 @@
 package service
 
 import (
+	"path/filepath"
+
 	"github.com/ReCasaOS/CasaOS-Common/external"
 	"github.com/ReCasaOS/CasaOS-UserService/codegen/message_bus"
 	"github.com/ReCasaOS/CasaOS-UserService/pkg/config"
@@ -25,7 +27,7 @@ func NewService(db *gorm.DB, RuntimePath string) Repository {
 
 	return &store{
 		gateway: gatewayManagement,
-		user:    NewUserService(db),
+		user:    NewUserService(db, filepath.Join(config.AppInfo.DBPath, KeyFilename)),
 		event:   NewEventService(db),
 	}
 }
