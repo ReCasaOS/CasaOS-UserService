@@ -3,11 +3,12 @@ module github.com/ReCasaOS/CasaOS-UserService
 go 1.26.0
 
 require (
-	github.com/ReCasaOS/CasaOS-Common v0.4.24
+	github.com/ReCasaOS/CasaOS-Common v0.4.25
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf
 	github.com/deepmap/oapi-codegen v1.12.4
 	github.com/getkin/kin-openapi v0.117.0
 	github.com/glebarez/sqlite v1.8.0
+	github.com/labstack/echo-jwt/v4 v4.4.0
 	github.com/labstack/echo/v4 v4.15.4
 	github.com/pquerna/otp v1.5.0
 	github.com/satori/go.uuid v1.2.0
@@ -40,7 +41,6 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
-	github.com/labstack/echo-jwt/v4 v4.4.0 // indirect
 	github.com/labstack/gommon v0.5.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
