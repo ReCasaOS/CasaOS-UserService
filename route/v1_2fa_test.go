@@ -46,9 +46,9 @@ type client struct {
 	h http.Handler
 }
 
-// do sends a JSON request from a non-loopback address (the JWT middleware
-// skips auth for 127.0.0.1) with the raw token in Authorization, as the
-// dashboard does.
+// do sends a JSON request from a non-loopback address with the raw token in
+// Authorization, as the dashboard does. Off loopback, the JWT middleware's
+// skip (loopback plus the internal secret) can never apply.
 func (c client) do(method, path, token string, body interface{}) (int, result) {
 	c.t.Helper()
 	var buf bytes.Buffer
