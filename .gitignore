@@ -20,8 +20,4 @@ target/
 dist/
 __debug_bin
 codegen/
-
-node_modules/
-dist/
 .idea
-.package-lock.json
