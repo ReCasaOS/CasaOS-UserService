@@ -20,7 +20,7 @@ import (
 func TestEventListenReconnectsWithCurrentSecret(t *testing.T) {
 	logger.LogInitConsoleOnly()
 
-	authorizations := make(chan string)
+	authorizations := make(chan string, 4)
 	proceed := make(chan struct{})
 	server := httptest.NewServer(websocket.Server{
 		Handshake: func(_ *websocket.Config, r *http.Request) error {
@@ -31,6 +31,7 @@ func TestEventListenReconnectsWithCurrentSecret(t *testing.T) {
 		Handler: func(*websocket.Conn) {}, // drops the subscription at once
 	})
 	defer server.Close()
+	defer close(proceed) // runs first: a failed test does not leave a handshake blocking Close
 
 	runtimePath := t.TempDir()
 	writeFile := func(name, content string) {
