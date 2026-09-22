@@ -3,6 +3,7 @@ package route
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -88,9 +89,19 @@ func dialMessageBus(wsURL, runtimePath string) (*websocket.Conn, error) {
 		return nil, err
 	}
 
-	if authorization := external.InternalAuthorization(runtimePath); authorization != "" {
+	// the secret goes to this box's own bus only, as Common's clients send it
+	if authorization := external.InternalAuthorization(runtimePath); authorization != "" && isLoopbackHost(cfg.Location.Hostname()) {
 		cfg.Header.Set("Authorization", authorization)
 	}
 
 	return websocket.DialConfig(cfg)
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+
+	return ip != nil && ip.IsLoopback()
 }
