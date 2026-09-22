@@ -27,7 +27,7 @@ func EventListen() {
 		}
 
 		wsURL := fmt.Sprintf("ws://%s/event/%s", strings.ReplaceAll(messageBusUrl, "http://", ""), "local-storage")
-		ws, err := websocket.Dial(wsURL, "", "http://localhost")
+		ws, err := dialMessageBus(wsURL, config.CommonInfo.RuntimePath)
 		if err != nil {
 			logger.Error("connect websocket err"+strconv.Itoa(i), zap.Any("error", err))
 			time.Sleep(time.Second * 1)
@@ -73,4 +73,21 @@ func EventListen() {
 		}
 	}
 	logger.Error("error when try to connect to message bus")
+}
+
+// dialMessageBus opens the subscription with this boot's internal secret, which
+// the bus now requires on its subscription routes. The secret is read at each
+// dial because a restarted gateway rewrites it; with no secret file (an older
+// gateway) the handshake goes without it, as before.
+func dialMessageBus(wsURL, runtimePath string) (*websocket.Conn, error) {
+	cfg, err := websocket.NewConfig(wsURL, "http://localhost")
+	if err != nil {
+		return nil, err
+	}
+
+	if authorization := external.InternalAuthorization(runtimePath); authorization != "" {
+		cfg.Header.Set("Authorization", authorization)
+	}
+
+	return websocket.DialConfig(cfg)
 }
