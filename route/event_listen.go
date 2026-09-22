@@ -33,21 +33,22 @@ func EventListen() {
 			time.Sleep(time.Second * 1)
 			continue
 		}
-		defer ws.Close()
-
 		logger.Info("subscribed to", zap.Any("url", wsURL))
+		// A working subscription starts the retry budget over, as the process
+		// restart that used to follow a lost subscription did.
+		i = 0
 		for {
-
-			msg := make([]byte, 1024)
-			n, err := ws.Read(msg)
-			if err != nil {
-				logger.Error("err", zap.Any("err", err.Error()))
+			var msg []byte
+			if err := websocket.Message.Receive(ws, &msg); err != nil {
+				// The bus went away: dial again, with the secret of now.
+				logger.Error("message bus subscription lost", zap.Error(err))
+				break
 			}
 
 			var event message_bus.Event
-
-			if err := json.Unmarshal(msg[:n], &event); err != nil {
-				logger.Error("err", zap.Any("err", err.Error()))
+			if err := json.Unmarshal(msg, &event); err != nil || event.Uuid == nil {
+				logger.Error("invalid event from message bus", zap.Any("err", err), zap.ByteString("event", msg))
+				continue
 			}
 			propertiesStr, err := json.Marshal(event.Properties)
 			if err != nil {
@@ -71,6 +72,8 @@ func EventListen() {
 			// }
 			// logger.Info("info", zap.Any("写入信息", string(output)))
 		}
+		ws.Close()
+		time.Sleep(time.Second * 1)
 	}
 	logger.Error("error when try to connect to message bus")
 }
