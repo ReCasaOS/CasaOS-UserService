@@ -89,7 +89,7 @@ func init() {
 		}
 
 		password := random.RandomString(6, false)
-		userData.Password = encryption.GetMD5ByStr(password)
+		userData.Password = encryption.HashPassword(password)
 		service.MyService.User().UpdateUserPassword(userData)
 		// The shell is the way back in when the authenticator and the recovery codes are both lost.
 		userData.TotpSecret, userData.TotpEnabled, userData.TotpLastStep, userData.RecoveryCodes = "", false, 0, nil
