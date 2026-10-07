@@ -261,7 +261,7 @@ func TestTwoFactorFlow(t *testing.T) {
 	c.expect(200, 200, "POST", "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": pre, "recovery_code": strings.ToUpper(recovery[0])})
 	c.expect(400, 10015, "POST", "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": pre, "recovery_code": recovery[0]})
 
-	// Disable needs exactly one factor; the password path is constant-time MD5.
+	// Disable needs exactly one factor; the password path is a constant-time comparison.
 	c.expect(400, 4000, "POST", "/v1/users/2fa/disable", access2, map[string]string{})
 	c.expect(400, 4000, "POST", "/v1/users/2fa/disable", access2, map[string]string{"code": valid, "password": password})
 	c.expect(400, 10015, "POST", "/v1/users/2fa/disable", access2, map[string]string{"password": "wrong"})

@@ -3,7 +3,6 @@ package v1
 import (
 	"context"
 	"crypto/ecdsa"
-	"crypto/subtle"
 	"encoding/base64"
 	json2 "encoding/json"
 	"image"
@@ -70,7 +69,7 @@ func PostUserRegister(ctx echo.Context) error {
 
 	user := model2.UserDBModel{}
 	user.Username = username
-	user.Password = encryption.GetMD5ByStr(pwd)
+	user.Password = encryption.HashPassword(pwd)
 	user.Role = "admin"
 
 	user = service.MyService.User().CreateUser(user)
@@ -86,9 +85,23 @@ func PostUserRegister(ctx echo.Context) error {
 // Exported so tests can lift it.
 var LoginLimiter = rate.NewLimiter(rate.Every(time.Minute), 5)
 
-// passwordMatches compares the stored MD5 hex with the candidate in constant time.
+// passwordMatches is whether candidate is the password stored as stored, an
+// argon2id hash or, for an account not signed in to since the upgrade, the
+// legacy MD5.
 func passwordMatches(stored, candidate string) bool {
-	return subtle.ConstantTimeCompare([]byte(stored), []byte(encryption.GetMD5ByStr(candidate))) == 1
+	return encryption.VerifyPassword(stored, candidate)
+}
+
+// upgradePassword stores password, which the user's hash just matched, as a fresh
+// argon2id hash when that hash is the legacy MD5 or was made with other
+// parameters: the owner signs in once and the weak value is gone, with nothing
+// asked of them. The swap is keyed on the hash as read, so a password changed
+// in the meantime is not put back; if it does not land, the next sign-in tries
+// again.
+func upgradePassword(user model2.UserDBModel, password string) {
+	if encryption.NeedsRehash(user.Password) {
+		service.MyService.User().ReplacePasswordHash(user.Id, user.Password, encryption.HashPassword(password))
+	}
 }
 
 // @Summary login
@@ -131,6 +144,7 @@ func PostUserLogin(ctx echo.Context) error {
 		return ctx.JSON(common_err.CLIENT_ERROR,
 			model.Result{Success: common_err.USER_NOT_EXIST_OR_PWD_INVALID, Message: common_err.GetMsg(common_err.USER_NOT_EXIST_OR_PWD_INVALID)})
 	}
+	upgradePassword(user, password)
 	if !user.TotpEnabled && user.TotpSecret != "" {
 		// An abandoned /2fa/setup does not leave its secret in user.db. The
 		// clear is conditional on the row as read: if /2fa/enable won the race
@@ -350,7 +364,7 @@ func PutUserPassword(ctx echo.Context) error {
 	if !passwordMatches(user.Password, oldPwd) {
 		return ctx.JSON(common_err.CLIENT_ERROR, model.Result{Success: common_err.PWD_INVALID_OLD, Message: common_err.GetMsg(common_err.PWD_INVALID_OLD)})
 	}
-	user.Password = encryption.GetMD5ByStr(pwd)
+	user.Password = encryption.HashPassword(pwd)
 	service.MyService.User().UpdateUserPassword(user)
 	user.Password = ""
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: user})

@@ -39,6 +39,7 @@ type UserService interface {
 	GetUserInfoByUserName(userName string) (m model.UserDBModel)
 	GetAllUserName() (list []model.UserDBModel)
 	UpdateUserTOTP(m model.UserDBModel)
+	ReplacePasswordHash(id int, current, replacement string) bool
 	EnableUserTOTP(id int, secret string, step int64, hashes []string) bool
 	ClearPendingTOTP(id int, secret string) bool
 	SetPendingTOTP(id int, secret string) bool
@@ -106,6 +107,14 @@ func (u *userService) UpdateUserTOTP(m model.UserDBModel) {
 // it returned are the ones in the row; the loser updates nothing.
 func (u *userService) EnableUserTOTP(id int, secret string, step int64, hashes []string) bool {
 	return changedOne("enable", u.db.Model(&model.UserDBModel{Id: id}).Select("totp_enabled", "totp_last_step", "recovery_codes").Where("totp_enabled = ? AND totp_secret = ?", false, secret).Updates(&model.UserDBModel{TotpEnabled: true, TotpLastStep: step, RecoveryCodes: hashes}))
+}
+
+// ReplacePasswordHash swaps a stored hash for another hash of the same password
+// and reports whether it did. The write is keyed on the hash as read: a sign-in
+// that read the row before a password change wrote it must not put the old
+// password back.
+func (u *userService) ReplacePasswordHash(id int, current, replacement string) bool {
+	return changedOne("replace password hash", u.db.Model(&model.UserDBModel{Id: id}).Where("password = ?", current).Update("password", replacement))
 }
 
 // ClearPendingTOTP removes a never-enabled secret and reports whether it did.
