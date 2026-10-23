@@ -10,6 +10,9 @@ type APPModel struct {
 	LogFileExt   string
 	UserDataPath string
 	DBPath       string
+	// FirstAdmin: "web" (default) → the first visitor of the dashboard creates
+	// the first account; "local" → only on the machine (-bootstrap-admin)
+	FirstAdmin string
 }
 
 type Result struct {

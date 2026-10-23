@@ -42,6 +42,11 @@ import (
 // @Summary register user
 // @Router /user/register/ [post]
 func PostUserRegister(ctx echo.Context) error {
+	if FirstAdminLocal() {
+		return ctx.JSON(http.StatusForbidden,
+			model.Result{Success: common_err.KEY_NOT_EXIST, Message: "the first account is created on the machine: casaos-user-service -bootstrap-admin"})
+	}
+
 	json := make(map[string]string)
 	ctx.Bind(&json)
 
@@ -805,8 +810,17 @@ func DeleteUserAll(ctx echo.Context) error {
 func GetUserStatus(ctx echo.Context) error {
 	data := make(map[string]interface{}, 2)
 
+	// "web" or "local": where the first account is created
+	data["first_admin"] = "web"
+	if FirstAdminLocal() {
+		data["first_admin"] = "local"
+	}
 	if service.MyService.User().GetUserCount() > 0 {
 		data["initialized"] = true
+		data["key"] = ""
+	} else if FirstAdminLocal() {
+		// no key over the network: the first account is created on the machine
+		data["initialized"] = false
 		data["key"] = ""
 	} else {
 		key := uuid.NewV4().String()

@@ -7,3 +7,6 @@ LogSaveName = user-service
 LogFileExt = log
 DBPath     = /var/lib/casaos/db
 UserDataPath = /var/lib/casaos
+; web: the first visitor of the dashboard creates the first account
+; local: only on the machine (casaos-user-service -bootstrap-admin)
+FirstAdmin = web
