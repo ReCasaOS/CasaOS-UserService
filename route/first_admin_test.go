@@ -70,3 +70,36 @@ func TestReadFirstAdminCredentials(t *testing.T) {
 		t.Fatalf("credentials: %q %q %v", username, password, err)
 	}
 }
+
+// an input that must not be read
+type unread struct{ t *testing.T }
+
+func (u unread) Read([]byte) (int, error) {
+	u.t.Error("credentials read although an account exists")
+	return 0, errors.New("not to be read")
+}
+
+// -bootstrap-admin on a box that has an account: refused, non-zero, before a credential is read
+func TestBootstrapRefusesBeforeReadingWhenAnAccountExists(t *testing.T) {
+	users, _ := newRig(t)
+	firstAdminLocal(t)
+	if err := v1.CreateFirstAdmin(users, "owner", "a long enough one"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	if _, err := v1.BootstrapFirstAdmin(users, unread{t}); !errors.Is(err, v1.ErrAlreadyInitialised) {
+		t.Fatalf("second bootstrap: %v, want ErrAlreadyInitialised", err)
+	}
+}
+
+func TestBootstrapCreatesTheFirstAdministrator(t *testing.T) {
+	users, _ := newRig(t)
+	firstAdminLocal(t)
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	if name, err := v1.BootstrapFirstAdmin(users, strings.NewReader("owner\na long enough one\n")); err != nil || name != "owner" {
+		t.Fatalf("%q %v", name, err)
+	}
+	if users.GetUserAllInfoByName("owner").Role != "admin" {
+		t.Fatal("no administrator")
+	}
+}

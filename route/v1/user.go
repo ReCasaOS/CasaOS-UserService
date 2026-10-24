@@ -370,7 +370,9 @@ func PutUserPassword(ctx echo.Context) error {
 		return ctx.JSON(common_err.CLIENT_ERROR, model.Result{Success: common_err.PWD_INVALID_OLD, Message: common_err.GetMsg(common_err.PWD_INVALID_OLD)})
 	}
 	user.Password = encryption.HashPassword(pwd)
-	service.MyService.User().UpdateUserPassword(user)
+	if err := service.MyService.User().UpdateUserPassword(user); err != nil {
+		return ctx.JSON(common_err.SERVICE_ERROR, model.Result{Success: common_err.SERVICE_ERROR, Message: common_err.GetMsg(common_err.SERVICE_ERROR), Data: err.Error()})
+	}
 	user.Password = ""
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: user})
 }

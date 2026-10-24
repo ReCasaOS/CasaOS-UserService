@@ -80,3 +80,17 @@ func ReadFirstAdminCredentials(input io.Reader) (string, string, error) {
 	username, password := read(), read()
 	return username, password, lines.Err()
 }
+
+// BootstrapFirstAdmin is -bootstrap-admin: refused (ErrAlreadyInitialised)
+// before any credential is read when an account exists, else the credentials
+// read and the first administrator created. The username it created.
+func BootstrapFirstAdmin(users service.UserService, input io.Reader) (string, error) {
+	if users.GetUserCount() > 0 {
+		return "", ErrAlreadyInitialised
+	}
+	username, password, err := ReadFirstAdminCredentials(input)
+	if err != nil {
+		return "", err
+	}
+	return username, CreateFirstAdmin(users, username, password)
+}

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -77,19 +78,17 @@ func init() {
 	sqliteDB := sqlite.GetDb(*dbFlag)
 
 	// the commands below need the account store only, not the gateway: they
-	// run (and end) on a box whose services are down
-	accounts := func() service.UserService {
-		return service.NewUserService(sqliteDB, filepath.Join(config.AppInfo.DBPath, service.KeyFilename))
+	// run (and end) on a box whose services are down; errors on stderr, exit 1
+	failed := func(what string, err error) {
+		fmt.Fprintln(os.Stderr, what+":", err)
+		os.Exit(1)
 	}
 
 	if *bootstrapAdminFlag {
-		username, password, err := v1.ReadFirstAdminCredentials(os.Stdin)
-		if err == nil {
-			err = v1.CreateFirstAdmin(accounts(), username, password)
-		}
+		users := service.NewUserService(sqliteDB, filepath.Join(config.AppInfo.DBPath, service.KeyFilename))
+		username, err := v1.BootstrapFirstAdmin(users, os.Stdin)
 		if err != nil {
-			fmt.Println("first administrator not created:", err)
-			os.Exit(1)
+			failed("first administrator not created", err)
 		}
 		fmt.Println("first administrator created:", username)
 		os.Exit(0)
@@ -97,25 +96,27 @@ func init() {
 
 	// -ru is a command: it ends the process, never goes on to start a second service
 	if *resetUserFlag {
-		users := accounts()
+		users := service.NewUserService(sqliteDB, filepath.Join(config.AppInfo.DBPath, service.KeyFilename))
 		if userFlag == nil || len(*userFlag) == 0 {
-			fmt.Println("user is empty")
-			os.Exit(1)
+			failed("user not reset", errors.New("user is empty"))
 		}
 
 		userData := users.GetUserAllInfoByName(*userFlag)
 
 		if userData.Id == 0 {
-			fmt.Println("user not exist")
-			os.Exit(1)
+			failed("user not reset", errors.New("user not exist"))
 		}
 
 		password := random.RandomString(6, false)
 		userData.Password = encryption.HashPassword(password)
-		users.UpdateUserPassword(userData)
+		if err := users.UpdateUserPassword(userData); err != nil {
+			failed("user not reset", err)
+		}
 		// The shell is the way back in when the authenticator and the recovery codes are both lost.
 		userData.TotpSecret, userData.TotpEnabled, userData.TotpLastStep, userData.RecoveryCodes = "", false, 0, nil
-		users.UpdateUserTOTP(userData)
+		if err := users.UpdateUserTOTP(userData); err != nil {
+			failed("password reset, two-factor authentication not disabled", err)
+		}
 		fmt.Println("User reset successful, two-factor authentication disabled")
 		fmt.Println("UserName:" + userData.Username)
 		fmt.Println("Password:" + password)
