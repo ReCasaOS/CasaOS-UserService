@@ -79,6 +79,10 @@ func init() {
 
 	// the commands below need the account store only, not the gateway: they
 	// run (and end) on a box whose services are down; errors on stderr, exit 1
+	if !v1.FirstAdminValueKnown() {
+		logger.Warn("[app] FirstAdmin is neither web nor local: taken as web", zap.String("FirstAdmin", config.AppInfo.FirstAdmin))
+	}
+
 	failed := func(what string, err error) {
 		fmt.Fprintln(os.Stderr, what+":", err)
 		os.Exit(1)
@@ -109,13 +113,11 @@ func init() {
 
 		password := random.RandomString(6, false)
 		userData.Password = encryption.HashPassword(password)
-		if err := users.UpdateUserPassword(userData); err != nil {
-			failed("user not reset", err)
-		}
 		// The shell is the way back in when the authenticator and the recovery codes are both lost.
 		userData.TotpSecret, userData.TotpEnabled, userData.TotpLastStep, userData.RecoveryCodes = "", false, 0, nil
-		if err := users.UpdateUserTOTP(userData); err != nil {
-			failed("password reset, two-factor authentication not disabled", err)
+		// one UPDATE: never a new password nobody was told, with 2FA still on
+		if err := users.ResetUserCredentials(userData); err != nil {
+			failed("user not reset", err)
 		}
 		fmt.Println("User reset successful, two-factor authentication disabled")
 		fmt.Println("UserName:" + userData.Username)

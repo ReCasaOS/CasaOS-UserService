@@ -14,6 +14,7 @@ import (
 	"github.com/ReCasaOS/CasaOS-UserService/pkg/utils/file"
 	"github.com/ReCasaOS/CasaOS-UserService/service"
 	model2 "github.com/ReCasaOS/CasaOS-UserService/service/model"
+	"github.com/mattn/go-isatty"
 )
 
 // FirstAdminLocal: [app] FirstAdmin = local → the first account is created on the
@@ -24,11 +25,21 @@ func FirstAdminLocal() bool {
 	return strings.EqualFold(strings.TrimSpace(config.AppInfo.FirstAdmin), "local")
 }
 
+// FirstAdminValueKnown: [app] FirstAdmin is empty, web or local; anything else (a typo) is taken as web, and said at start.
+func FirstAdminValueKnown() bool {
+	switch strings.ToLower(strings.TrimSpace(config.AppInfo.FirstAdmin)) {
+	case "", "web", "local":
+		return true
+	}
+	return false
+}
+
 var (
 	ErrAlreadyInitialised = errors.New("an account exists already: the first administrator is created only once")
 	ErrEmptyCredentials   = errors.New("username and password must not be empty")
 	ErrPasswordTooShort   = errors.New("the password needs at least 6 characters")
 	ErrUserCreateFailed   = errors.New("the account could not be stored")
+	ErrTerminalInput      = errors.New("the password would be echoed on this terminal: pipe the two lines in, or use systemd credentials ($CREDENTIALS_DIRECTORY)")
 )
 
 // CreateFirstAdmin creates the first administrator, with the rules of the
@@ -88,9 +99,18 @@ func BootstrapFirstAdmin(users service.UserService, input io.Reader) (string, er
 	if users.GetUserCount() > 0 {
 		return "", ErrAlreadyInitialised
 	}
+	if os.Getenv("CREDENTIALS_DIRECTORY") == "" && isTerminal(input) {
+		return "", ErrTerminalInput
+	}
 	username, password, err := ReadFirstAdminCredentials(input)
 	if err != nil {
 		return "", err
 	}
 	return username, CreateFirstAdmin(users, username, password)
+}
+
+// isTerminal: input is a terminal, where what is typed is echoed.
+func isTerminal(input io.Reader) bool {
+	f, ok := input.(*os.File)
+	return ok && (isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd()))
 }

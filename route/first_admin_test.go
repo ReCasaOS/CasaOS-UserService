@@ -103,3 +103,30 @@ func TestBootstrapCreatesTheFirstAdministrator(t *testing.T) {
 		t.Fatal("no administrator")
 	}
 }
+
+// a typo in [app] FirstAdmin is taken as web, and said at start
+func TestFirstAdminValueKnown(t *testing.T) {
+	previous := config.AppInfo.FirstAdmin
+	t.Cleanup(func() { config.AppInfo.FirstAdmin = previous })
+	for value, want := range map[string]bool{"": true, "web": true, "Local": true, " local ": true, "locale": false, "lokal": false} {
+		config.AppInfo.FirstAdmin = value
+		if got := v1.FirstAdminValueKnown(); got != want {
+			t.Errorf("FirstAdminValueKnown(%q) = %v, want %v", value, got, want)
+		}
+	}
+}
+
+// stdin that is not a terminal (a pipe, /dev/null) is read; only a terminal is refused
+func TestBootstrapReadsWhatIsNotATerminal(t *testing.T) {
+	users, _ := newRig(t)
+	firstAdminLocal(t)
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer null.Close()
+	if _, err := v1.BootstrapFirstAdmin(users, null); !errors.Is(err, v1.ErrEmptyCredentials) {
+		t.Fatalf("/dev/null: %v, want ErrEmptyCredentials (read, nothing in it)", err)
+	}
+}

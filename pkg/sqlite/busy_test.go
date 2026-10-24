@@ -8,6 +8,11 @@ func TestTheDatabaseWaitsForAWriteOfAnotherProcess(t *testing.T) {
 	gdb = nil
 	t.Cleanup(func() { gdb = previous })
 	db := GetDb(t.TempDir())
+	t.Cleanup(func() {
+		if sqlDB, err := db.DB(); err == nil {
+			_ = sqlDB.Close() // the directory is removed after: Windows cannot while the file is open
+		}
+	})
 	var timeout int
 	if err := db.Raw("PRAGMA busy_timeout").Scan(&timeout).Error; err != nil {
 		t.Fatal(err)

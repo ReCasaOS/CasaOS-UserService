@@ -39,6 +39,8 @@ type UserService interface {
 	GetUserInfoByUserName(userName string) (m model.UserDBModel)
 	GetAllUserName() (list []model.UserDBModel)
 	UpdateUserTOTP(m model.UserDBModel) error
+	// ResetUserCredentials writes the password and the four 2FA columns in one UPDATE: both, or neither
+	ResetUserCredentials(m model.UserDBModel) error
 	ReplacePasswordHash(id int, current, replacement string) bool
 	EnableUserTOTP(id int, secret string, step int64, hashes []string) bool
 	ClearPendingTOTP(id int, secret string) bool
@@ -182,6 +184,10 @@ func (u *userService) UseRecoveryCode(id int, code string) bool {
 	}
 	prev, _ := json.Marshal(user.RecoveryCodes)
 	return changedOne("use recovery code", u.db.Model(&model.UserDBModel{Id: id}).Select("recovery_codes").Where("recovery_codes = ?", string(prev)).Updates(&model.UserDBModel{RecoveryCodes: remaining}))
+}
+
+func (u *userService) ResetUserCredentials(m model.UserDBModel) error {
+	return u.db.Model(&m).Select("password", "totp_secret", "totp_enabled", "totp_last_step", "recovery_codes").Updates(&m).Error
 }
 
 func (u *userService) UpdateUserPassword(m model.UserDBModel) error {
