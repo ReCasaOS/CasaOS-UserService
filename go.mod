@@ -9,13 +9,13 @@ require (
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/glebarez/sqlite v1.8.0
 	github.com/labstack/echo-jwt/v4 v4.4.0
-	github.com/labstack/echo/v4 v4.15.4
+	github.com/labstack/echo/v4 v4.16.1
 	github.com/pquerna/otp v1.5.0
 	github.com/satori/go.uuid v1.2.0
 	github.com/tidwall/gjson v1.17.0
 	go.uber.org/zap v1.24.0
 	golang.org/x/crypto v0.57.0
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/time v0.15.0
 	gopkg.in/ini.v1 v1.67.0
 	gorm.io/gorm v1.25.0

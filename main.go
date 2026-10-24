@@ -73,31 +73,41 @@ func init() {
 	}
 
 	sqliteDB := sqlite.GetDb(*dbFlag)
-	service.MyService = service.NewService(sqliteDB, config.CommonInfo.RuntimePath)
 
+	// the commands below need the account store only, not the gateway: they
+	// run (and end) on a box whose services are down
+	accounts := func() service.UserService {
+		return service.NewUserService(sqliteDB, filepath.Join(config.AppInfo.DBPath, service.KeyFilename))
+	}
+
+	// -ru is a command: it ends the process, never goes on to start a second service
 	if *resetUserFlag {
+		users := accounts()
 		if userFlag == nil || len(*userFlag) == 0 {
 			fmt.Println("user is empty")
-			return
+			os.Exit(1)
 		}
 
-		userData := service.MyService.User().GetUserAllInfoByName(*userFlag)
+		userData := users.GetUserAllInfoByName(*userFlag)
 
 		if userData.Id == 0 {
 			fmt.Println("user not exist")
-			return
+			os.Exit(1)
 		}
 
 		password := random.RandomString(6, false)
 		userData.Password = encryption.HashPassword(password)
-		service.MyService.User().UpdateUserPassword(userData)
+		users.UpdateUserPassword(userData)
 		// The shell is the way back in when the authenticator and the recovery codes are both lost.
 		userData.TotpSecret, userData.TotpEnabled, userData.TotpLastStep, userData.RecoveryCodes = "", false, 0, nil
-		service.MyService.User().UpdateUserTOTP(userData)
+		users.UpdateUserTOTP(userData)
 		fmt.Println("User reset successful, two-factor authentication disabled")
 		fmt.Println("UserName:" + userData.Username)
 		fmt.Println("Password:" + password)
+		os.Exit(0)
 	}
+
+	service.MyService = service.NewService(sqliteDB, config.CommonInfo.RuntimePath)
 }
 
 func main() {
