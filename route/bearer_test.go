@@ -17,4 +17,5 @@ func TestTheAccessTokenIsTakenBareOrAsBearer(t *testing.T) {
 	c.expect(200, 200, "GET", "/v1/users/current", "Bearer "+access, nil)
 	c.expect(200, 200, "GET", "/v1/users/current", "bearer "+access, nil)
 	c.expect(401, 0, "GET", "/v1/users/current", "Basic "+access, nil)
+	c.expect(401, 0, "GET", "/v1/users/current", "Bearer", nil) // the scheme alone is no token
 }
