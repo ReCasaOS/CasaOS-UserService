@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ReCasaOS/CasaOS-Common/utils/logger"
+
 	"github.com/ReCasaOS/CasaOS-Common/external"
 	"github.com/ReCasaOS/CasaOS-UserService/codegen/message_bus"
 	"github.com/ReCasaOS/CasaOS-UserService/pkg/utils/encryption"
@@ -120,6 +122,7 @@ func wrongCode(t *testing.T, secret string) string {
 // budget spent on an id in one test is not inherited by the next.
 func newRig(t *testing.T) (service.UserService, client) {
 	t.Helper()
+	logger.LogInitConsoleOnly() // the handlers log; a test run on its own has no logger otherwise
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -26,6 +27,7 @@ import (
 	"github.com/ReCasaOS/CasaOS-UserService/pkg/utils/encryption"
 	"github.com/ReCasaOS/CasaOS-UserService/pkg/utils/random"
 	"github.com/ReCasaOS/CasaOS-UserService/route"
+	v1 "github.com/ReCasaOS/CasaOS-UserService/route/v1"
 	"github.com/ReCasaOS/CasaOS-UserService/service"
 	"github.com/coreos/go-systemd/daemon"
 	"go.uber.org/zap"
@@ -53,6 +55,7 @@ func init() {
 	resetUserFlag := flag.Bool("ru", false, "reset user")
 	userFlag := flag.String("user", "", "user name")
 	versionFlag := flag.Bool("v", false, "version")
+	bootstrapAdminFlag := flag.Bool("bootstrap-admin", false, "create the first administrator: username and password from $CREDENTIALS_DIRECTORY or two lines on stdin; once")
 
 	flag.Parse()
 
@@ -75,32 +78,47 @@ func init() {
 	sqliteDB := sqlite.GetDb(*dbFlag)
 
 	// the commands below need the account store only, not the gateway: they
-	// run (and end) on a box whose services are down
-	accounts := func() service.UserService {
-		return service.NewUserService(sqliteDB, filepath.Join(config.AppInfo.DBPath, service.KeyFilename))
+	// run (and end) on a box whose services are down; errors on stderr, exit 1
+	if !v1.FirstAdminValueKnown() {
+		logger.Warn("[app] FirstAdmin is neither web nor local: taken as web", zap.String("FirstAdmin", config.AppInfo.FirstAdmin))
+	}
+
+	failed := func(what string, err error) {
+		fmt.Fprintln(os.Stderr, what+":", err)
+		os.Exit(1)
+	}
+
+	if *bootstrapAdminFlag {
+		users := service.NewUserService(sqliteDB, filepath.Join(config.AppInfo.DBPath, service.KeyFilename))
+		username, err := v1.BootstrapFirstAdmin(users, os.Stdin)
+		if err != nil {
+			failed("first administrator not created", err)
+		}
+		fmt.Println("first administrator created:", username)
+		os.Exit(0)
 	}
 
 	// -ru is a command: it ends the process, never goes on to start a second service
 	if *resetUserFlag {
-		users := accounts()
+		users := service.NewUserService(sqliteDB, filepath.Join(config.AppInfo.DBPath, service.KeyFilename))
 		if userFlag == nil || len(*userFlag) == 0 {
-			fmt.Println("user is empty")
-			os.Exit(1)
+			failed("user not reset", errors.New("user is empty"))
 		}
 
 		userData := users.GetUserAllInfoByName(*userFlag)
 
 		if userData.Id == 0 {
-			fmt.Println("user not exist")
-			os.Exit(1)
+			failed("user not reset", errors.New("user not exist"))
 		}
 
 		password := random.RandomString(6, false)
 		userData.Password = encryption.HashPassword(password)
-		users.UpdateUserPassword(userData)
 		// The shell is the way back in when the authenticator and the recovery codes are both lost.
 		userData.TotpSecret, userData.TotpEnabled, userData.TotpLastStep, userData.RecoveryCodes = "", false, 0, nil
-		users.UpdateUserTOTP(userData)
+		// one UPDATE: never a new password nobody was told, with 2FA still on
+		if err := users.ResetUserCredentials(userData); err != nil {
+			failed("user not reset", err)
+		}
 		fmt.Println("User reset successful, two-factor authentication disabled")
 		fmt.Println("UserName:" + userData.Username)
 		fmt.Println("Password:" + password)

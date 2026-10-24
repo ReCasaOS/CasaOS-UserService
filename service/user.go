@@ -30,7 +30,7 @@ type UserService interface {
 	CreateUser(m model.UserDBModel) model.UserDBModel
 	GetUserCount() (userCount int64)
 	UpdateUser(m model.UserDBModel)
-	UpdateUserPassword(m model.UserDBModel)
+	UpdateUserPassword(m model.UserDBModel) error
 	GetUserInfoById(id string) (m model.UserDBModel)
 	GetUserAllInfoById(id string) (m model.UserDBModel)
 	GetUserAllInfoByName(userName string) (m model.UserDBModel)
@@ -38,7 +38,9 @@ type UserService interface {
 	DeleteAllUser()
 	GetUserInfoByUserName(userName string) (m model.UserDBModel)
 	GetAllUserName() (list []model.UserDBModel)
-	UpdateUserTOTP(m model.UserDBModel)
+	UpdateUserTOTP(m model.UserDBModel) error
+	// ResetUserCredentials writes the password and the four 2FA columns in one UPDATE: both, or neither
+	ResetUserCredentials(m model.UserDBModel) error
 	ReplacePasswordHash(id int, current, replacement string) bool
 	EnableUserTOTP(id int, secret string, step int64, hashes []string) bool
 	ClearPendingTOTP(id int, secret string) bool
@@ -96,8 +98,8 @@ func (u *userService) UpdateUser(m model.UserDBModel) {
 
 // UpdateUserTOTP writes the four 2FA columns, zero values included: Updates
 // alone skips false/0/"" and could never disable.
-func (u *userService) UpdateUserTOTP(m model.UserDBModel) {
-	u.db.Model(&m).Select("totp_secret", "totp_enabled", "totp_last_step", "recovery_codes").Updates(&m)
+func (u *userService) UpdateUserTOTP(m model.UserDBModel) error {
+	return u.db.Model(&m).Select("totp_secret", "totp_enabled", "totp_last_step", "recovery_codes").Updates(&m).Error
 }
 
 // EnableUserTOTP turns the pending secret on, recording the enrolment step
@@ -184,8 +186,12 @@ func (u *userService) UseRecoveryCode(id int, code string) bool {
 	return changedOne("use recovery code", u.db.Model(&model.UserDBModel{Id: id}).Select("recovery_codes").Where("recovery_codes = ?", string(prev)).Updates(&model.UserDBModel{RecoveryCodes: remaining}))
 }
 
-func (u *userService) UpdateUserPassword(m model.UserDBModel) {
-	u.db.Model(&m).Update("password", m.Password)
+func (u *userService) ResetUserCredentials(m model.UserDBModel) error {
+	return u.db.Model(&m).Select("password", "totp_secret", "totp_enabled", "totp_last_step", "recovery_codes").Updates(&m).Error
+}
+
+func (u *userService) UpdateUserPassword(m model.UserDBModel) error {
+	return u.db.Model(&m).Update("password", m.Password).Error
 }
 
 func (u *userService) GetUserAllInfoById(id string) (m model.UserDBModel) {

@@ -10,6 +10,7 @@ require (
 	github.com/glebarez/sqlite v1.8.0
 	github.com/labstack/echo-jwt/v4 v4.4.0
 	github.com/labstack/echo/v4 v4.16.1
+	github.com/mattn/go-isatty v0.0.22
 	github.com/pquerna/otp v1.5.0
 	github.com/satori/go.uuid v1.2.0
 	github.com/tidwall/gjson v1.17.0
@@ -41,7 +42,6 @@ require (
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/labstack/gommon v0.5.0 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
-	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/orca-zhang/ecache v1.1.3 // indirect

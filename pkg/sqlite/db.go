@@ -29,7 +29,9 @@ func GetDb(dbPath string) *gorm.DB {
 	}
 
 	file.IsNotExistMkDir(dbPath)
-	db, err := gorm.Open(sqlite.Open(dbPath+"/user.db"), &gorm.Config{})
+	// busy_timeout: a second process on the same file (`-ru`, `-bootstrap-admin` beside the running
+	// service) waits for the other's write instead of failing at once with SQLITE_BUSY
+	db, err := gorm.Open(sqlite.Open(dbPath+"/user.db?_pragma=busy_timeout(5000)"), &gorm.Config{})
 	if err != nil {
 		panic(err)
 	}
