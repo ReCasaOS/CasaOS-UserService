@@ -91,6 +91,8 @@ func InitRouter() http.Handler {
 		// v1UserGroup.POST("/file/image/:key", v1.PostUserFileImage)
 		v1UsersGroup.DELETE("/current/image", v1.DeleteUserImage)
 
+		v1UsersGroup.PUT("/login-style", v1.PutLoginStyle)
+
 		v1UsersGroup.PUT("/avatar", v1.PutUserAvatar)
 		v1UsersGroup.GET("/avatar", v1.GetUserAvatar)
 
