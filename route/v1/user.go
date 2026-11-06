@@ -810,7 +810,7 @@ func DeleteUserAll(ctx echo.Context) error {
 // @Success 200 {string} string "ok"
 // @Router /sys/init/check [get]
 func GetUserStatus(ctx echo.Context) error {
-	data := make(map[string]interface{}, 2)
+	data := make(map[string]interface{}, 5)
 
 	// "web" or "local": where the first account is created
 	data["first_admin"] = "web"
@@ -835,6 +835,8 @@ func GetUserStatus(ctx echo.Context) error {
 		logger.Error("NvidiaGPUInfoList error", zap.Error(err))
 	}
 	data["gpus"] = len(gpus)
+	// which login page to show: the login page asks before anybody signs in
+	data["login_style"] = LoginStyle()
 	return ctx.JSON(common_err.SUCCESS,
 		model.Result{
 			Success: common_err.SUCCESS,
