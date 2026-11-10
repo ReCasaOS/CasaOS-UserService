@@ -33,6 +33,14 @@ type UserDBModel struct {
 	TotpEnabled   bool     `gorm:"default:false" json:"totp_enabled"`
 	TotpLastStep  int64    `gorm:"default:0" json:"-"`       // last accepted 30 s step (replay guard)
 	RecoveryCodes []string `gorm:"serializer:json" json:"-"` // bcrypt hashes, removed as consumed
+
+	// SessionVersion numbers the sessions of the account: a refresh token carries the number the
+	// row had when it was made, and is refused once the row has another. A password change adds
+	// one, which ends every session opened before it. A new account starts at the instant it is
+	// made (CreateUser), not at 0: the database gives the id of an account that is gone to the
+	// next one, and a token of the first must not be of the second's session. An account from
+	// before sessions were numbered is at 0, like its tokens, which say nothing.
+	SessionVersion int64 `gorm:"default:0" json:"-"`
 }
 
 func (p *UserDBModel) TableName() string {

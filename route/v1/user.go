@@ -236,26 +236,28 @@ func PostUserLogin(ctx echo.Context) error {
 	return issueTokens(ctx, user)
 }
 
+// newTokens is the pair of a session of user: an access token, three hours, and the refresh
+// token of the session the row is at.
+func newTokens(user model2.UserDBModel) (system_model.VerifyInformation, error) {
+	privateKey, _ := service.MyService.User().GetKeyPair()
+	access, err := jwt.GetAccessToken(user.Username, privateKey, user.Id)
+	if err != nil {
+		return system_model.VerifyInformation{}, err
+	}
+	refresh, err := service.MyService.User().RefreshToken(user)
+	if err != nil {
+		return system_model.VerifyInformation{}, err
+	}
+	return system_model.VerifyInformation{AccessToken: access, RefreshToken: refresh, ExpiresAt: time.Now().Add(3 * time.Hour).Unix()}, nil
+}
+
 // issueTokens mints the access and refresh tokens and builds the login body;
 // shared by /login (2FA off) and /2fa/verify (2FA on).
 func issueTokens(ctx echo.Context, user model2.UserDBModel) error {
-	privateKey, _ := service.MyService.User().GetKeyPair()
-
-	token := system_model.VerifyInformation{}
-
-	accessToken, err := jwt.GetAccessToken(user.Username, privateKey, user.Id)
+	token, err := newTokens(user)
 	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
 	}
-	token.AccessToken = accessToken
-
-	refreshToken, err := jwt.GetRefreshToken(user.Username, privateKey, user.Id)
-	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
-	}
-	token.RefreshToken = refreshToken
-
-	token.ExpiresAt = time.Now().Add(3 * time.Hour * time.Duration(1)).Unix()
 	data := make(map[string]interface{}, 2)
 	user.Password = ""
 	data["token"] = token
@@ -431,8 +433,14 @@ func PutUserPassword(ctx echo.Context) error {
 	if err := service.MyService.User().UpdateUserPassword(user); err != nil {
 		return ctx.JSON(common_err.SERVICE_ERROR, model.Result{Success: common_err.SERVICE_ERROR, Message: common_err.GetMsg(common_err.SERVICE_ERROR), Data: err.Error()})
 	}
-	user.Password = ""
-	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: user})
+	// The change ended every session of the account, this one with them: it goes on with the
+	// pair made here, of the session the row is at now. The body is the one of a login.
+	user = service.MyService.User().GetUserAllInfoById(id)
+	if user.Id == 0 { // gone since the change: no pair for an account that is not there
+		return ctx.JSON(common_err.SERVICE_ERROR,
+			model.Result{Success: common_err.USER_NOT_EXIST, Message: common_err.GetMsg(common_err.USER_NOT_EXIST)})
+	}
+	return issueTokens(ctx, user)
 }
 
 // @Summary edit user nick
@@ -827,8 +835,6 @@ func PostUserRefreshToken(ctx echo.Context) error {
 	ctx.Bind(&js)
 	refresh := js["refresh_token"]
 
-	privateKey, _ := service.MyService.User().GetKeyPair()
-
 	claims, err := jwt.ParseToken(
 		refresh,
 		func() (*ecdsa.PublicKey, error) {
@@ -842,20 +848,17 @@ func PostUserRefreshToken(ctx echo.Context) error {
 		return ctx.JSON(http.StatusUnauthorized, model.Result{Success: common_err.VERIFICATION_FAILURE, Message: common_err.GetMsg(common_err.VERIFICATION_FAILURE)})
 	}
 
-	newAccessToken, err := jwt.GetAccessToken(claims.Username, privateKey, claims.ID)
-	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
+	// The token is only a signature: the account is read again. It may be gone, a password
+	// change since the token was made ended its session, and an account made since under the
+	// same id has sessions of its own.
+	user := service.MyService.User().GetUserAllInfoById(strconv.Itoa(claims.ID))
+	if user.Id == 0 || service.SessionOf(claims) != user.SessionVersion {
+		return ctx.JSON(http.StatusUnauthorized, model.Result{Success: common_err.VERIFICATION_FAILURE, Message: common_err.GetMsg(common_err.VERIFICATION_FAILURE)})
 	}
 
-	newRefreshToken, err := jwt.GetRefreshToken(claims.Username, privateKey, claims.ID)
+	verifyInfo, err := newTokens(user)
 	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
-	}
-
-	verifyInfo := system_model.VerifyInformation{
-		AccessToken:  newAccessToken,
-		RefreshToken: newRefreshToken,
-		ExpiresAt:    time.Now().Add(3 * time.Hour).Unix(),
 	}
 
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: verifyInfo})
