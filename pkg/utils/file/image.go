@@ -147,6 +147,7 @@ func GetImageExt(p string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer file.Close()
 
 	buff := make([]byte, 512)
 

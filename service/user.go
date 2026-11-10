@@ -16,6 +16,7 @@ import (
 	"io"
 	"mime/multipart"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/ReCasaOS/CasaOS-Common/utils/jwt"
@@ -54,7 +55,12 @@ type UserService interface {
 	ParsePreAuthToken(token string) (*jwt.Claims, error)
 }
 
-var UserRegisterHash = make(map[string]string)
+// UserRegisterHash holds the keys handed out to create the first account, and
+// UserRegisterMu guards it: the handlers run on a goroutine per request.
+var (
+	UserRegisterMu   sync.Mutex
+	UserRegisterHash = make(map[string]string)
+)
 
 type userService struct {
 	privateKey *ecdsa.PrivateKey // keep this private - NEVER expose it!!!
