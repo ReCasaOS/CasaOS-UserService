@@ -34,7 +34,6 @@ func InitRouter() http.Handler {
 	e.POST("/v1/users/register", v1.PostUserRegister)
 	e.POST("/v1/users/login", v1.PostUserLogin)
 	e.POST("/v1/users/2fa/verify", v1.PostUser2FAVerify)
-	e.GET("/v1/users/name", v1.GetUserAllUsername) // all/name
 	e.POST("/v1/users/refresh", v1.PostUserRefreshToken)
 	// No short-term modifications
 	e.GET("/v1/users/image", v1.GetUserImage)
@@ -97,6 +96,7 @@ func InitRouter() http.Handler {
 		v1UsersGroup.GET("/avatar", v1.GetUserAvatar)
 
 		v1UsersGroup.DELETE("/:id", v1.DeleteUser)
+		v1UsersGroup.GET("/name", v1.GetUserAllUsername) // all/name; who has an account is not said without a sign-in
 		v1UsersGroup.GET("/:username", v1.GetUserInfoByUsername)
 		v1UsersGroup.DELETE("", v1.DeleteUserAll)
 	}

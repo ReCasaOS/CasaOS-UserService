@@ -2,6 +2,7 @@ package route_test
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -46,6 +47,8 @@ type result struct {
 type client struct {
 	t *testing.T
 	h http.Handler
+	// ip is the address the request comes from; empty is 10.0.0.1
+	ip string
 }
 
 // do sends a JSON request from a non-loopback address with the raw token in
@@ -61,7 +64,7 @@ func (c client) do(method, path, token string, body interface{}) (int, result) {
 	}
 	req := httptest.NewRequest(method, path, &buf)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Real-IP", "10.0.0.1")
+	req.Header.Set("X-Real-IP", cmp.Or(c.ip, "10.0.0.1"))
 	if token != "" {
 		req.Header.Set("Authorization", token)
 	}
@@ -134,7 +137,8 @@ func newRig(t *testing.T) (service.UserService, client) {
 	}
 	users := service.NewUserService(db, filepath.Join(t.TempDir(), "user-service.key"))
 	service.MyService = fakeRepo{user: users}
-	v1.LoginLimiter.SetLimit(rate.Inf)
+	v1.LoginLimit = rate.Inf
+	v1.ResetLoginLimiters()
 	v1.UserLimit = rate.Inf
 	v1.ResetUserLimiters()
 	return users, client{t: t, h: route.InitRouter()}
@@ -419,7 +423,7 @@ func TestLoginClearIsConditional(t *testing.T) {
 	}
 }
 
-// TestVerifyOutsideLoginLimiter: an exhausted service-wide login budget
+// TestVerifyOutsideLoginLimiter: an address's exhausted login budget
 // refuses /login but leaves /2fa/verify alone, garbage or not, so a stream of
 // garbage pre-auth tokens cannot starve /login and a legitimate 2FA login
 // costs one login token, not two.
@@ -432,9 +436,11 @@ func TestVerifyOutsideLoginLimiter(t *testing.T) {
 	c.expect(200, 200, "POST", "/v1/users/2fa/enable", access, map[string]string{"code": codeAt(t, secret, time.Now())})
 	pre, _ := c.expect(200, 10014, "POST", "/v1/users/login", "", map[string]string{"username": "carol", "password": password})["pre_auth_token"].(string)
 
-	v1.LoginLimiter.SetLimit(0)
-	v1.LoginLimiter.SetBurst(0)
-	defer v1.LoginLimiter.SetLimit(rate.Inf)
+	v1.LoginLimit = 0 // no refill: the five of the burst, then nothing
+	v1.ResetLoginLimiters()
+	for i := 0; i < 5; i++ {
+		c.do("POST", "/v1/users/login", "", map[string]string{"username": "carol", "password": "wrong"})
+	}
 	c.expect(429, 10012, "POST", "/v1/users/login", "", map[string]string{"username": "carol", "password": password})
 	c.expect(400, 20006, "POST", "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": "garbage", "code": "000000"})
 	c.expect(400, 10015, "POST", "/v1/users/2fa/verify", "", map[string]string{"pre_auth_token": pre, "code": wrongCode(t, secret)})

@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ReCasaOS/CasaOS-Common/external"
@@ -53,7 +54,14 @@ func PostUserRegister(ctx echo.Context) error {
 	username := json["username"]
 	pwd := json["password"]
 	key := json["key"]
-	if _, ok := service.UserRegisterHash[key]; !ok {
+
+	// Held to the end: two keys used at the same moment make one account, not two.
+	service.UserRegisterMu.Lock()
+	defer service.UserRegisterMu.Unlock()
+
+	// A key creates the first account and no other. Every visit before the box is
+	// set up was handed one, and only the one used was ever forgotten.
+	if _, ok := service.UserRegisterHash[key]; !ok || service.MyService.User().GetUserCount() > 0 {
 		return ctx.JSON(common_err.CLIENT_ERROR,
 			model.Result{Success: common_err.KEY_NOT_EXIST, Message: common_err.GetMsg(common_err.KEY_NOT_EXIST)})
 	}
@@ -82,13 +90,62 @@ func PostUserRegister(ctx echo.Context) error {
 		return ctx.JSON(common_err.SERVICE_ERROR, model.Result{Success: common_err.SERVICE_ERROR, Message: common_err.GetMsg(common_err.SERVICE_ERROR)})
 	}
 	file.MkDir(config.AppInfo.UserDataPath + "/" + strconv.Itoa(user.Id))
-	delete(service.UserRegisterHash, key)
+	clear(service.UserRegisterHash)
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS)})
 }
 
-// LoginLimiter is the service-wide budget for /login: burst 5, refill 1/min.
-// Exported so tests can lift it.
-var LoginLimiter = rate.NewLimiter(rate.Every(time.Minute), 5)
+// The /login budgets: burst 5, refill 1/min. /login needs no account, so everybody
+// who never signed in shares one budget: however many addresses somebody guessing
+// passwords has, it is five tries and then one a minute. With that budget alone,
+// any machine on the network spent it and the owner could not sign in; so an
+// address a sign-in succeeded from has a budget of its own. The address is the
+// one the gateway reports; it drops what the client says about itself.
+// shortcut: the known addresses are forgotten at a restart and when the owner's
+// address changes; the next sign-in is a stranger's again. Keep them on disk if
+// that turns out to matter.
+var (
+	// LoginLimit is the refill rate of each budget; exported so tests can lift it.
+	LoginLimit = rate.Every(time.Minute)
+
+	loginMu        sync.Mutex
+	strangersLogin = rate.NewLimiter(LoginLimit, 5)
+	knownLogin     = map[string]*rate.Limiter{}
+)
+
+// maxKnownLogins bounds a table only a correct password adds to.
+const maxKnownLogins = 1024
+
+// loginBudget is the budget a sign-in from ip is taken from.
+func loginBudget(ip string) *rate.Limiter {
+	loginMu.Lock()
+	defer loginMu.Unlock()
+	if l, known := knownLogin[ip]; known {
+		return l
+	}
+	return strangersLogin
+}
+
+// signedInFrom gives ip its own budget from now on: its password was right.
+func signedInFrom(ip string) {
+	loginMu.Lock()
+	defer loginMu.Unlock()
+	if _, known := knownLogin[ip]; known {
+		return
+	}
+	if len(knownLogin) >= maxKnownLogins {
+		clear(knownLogin)
+	}
+	knownLogin[ip] = rate.NewLimiter(LoginLimit, 5)
+}
+
+// ResetLoginLimiters starts every /login budget again, at LoginLimit. Test hook,
+// as ResetUserLimiters.
+func ResetLoginLimiters() {
+	loginMu.Lock()
+	defer loginMu.Unlock()
+	strangersLogin = rate.NewLimiter(LoginLimit, 5)
+	clear(knownLogin)
+}
 
 // passwordMatches is whether candidate is the password stored as stored, an
 // argon2id hash or, for an account not signed in to since the upgrade, the
@@ -118,7 +175,7 @@ func upgradePassword(user model2.UserDBModel, password string) {
 // @Success 200 {string} string "ok"
 // @Router /user/login [post]
 func PostUserLogin(ctx echo.Context) error {
-	if !LoginLimiter.Allow() {
+	if !loginBudget(ctx.RealIP()).Allow() {
 		return ctx.JSON(common_err.TOO_MANY_REQUEST,
 			model.Result{
 				Success: common_err.TOO_MANY_LOGIN_REQUESTS,
@@ -149,6 +206,7 @@ func PostUserLogin(ctx echo.Context) error {
 		return ctx.JSON(common_err.CLIENT_ERROR,
 			model.Result{Success: common_err.USER_NOT_EXIST_OR_PWD_INVALID, Message: common_err.GetMsg(common_err.USER_NOT_EXIST_OR_PWD_INVALID)})
 	}
+	signedInFrom(ctx.RealIP())
 	upgradePassword(user, password)
 	if !user.TotpEnabled && user.TotpSecret != "" {
 		// An abandoned /2fa/setup does not leave its secret in user.db. The
@@ -694,6 +752,9 @@ func PostUserUploadImage(ctx echo.Context) error {
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: data})
 }
 
+// userFolderFile is a path, relative to UserDataPath, of a file in a user's folder.
+var userFolderFile = regexp.MustCompile(`^\d+/.`)
+
 /**
  * @description: get current user's image
  * @method:GET
@@ -708,19 +769,22 @@ func GetUserImage(ctx echo.Context) error {
 	if err != nil {
 		return ctx.JSON(http.StatusNotFound, model.Result{Success: common_err.INVALID_PARAMS, Message: common_err.GetMsg(common_err.INVALID_PARAMS)})
 	}
+	// A user's folder is <UserDataPath>/<id>, and what is asked for is in one. Checked
+	// before the disk is looked at: the answer does not say what exists elsewhere.
+	rel, err := filepath.Rel(config.AppInfo.UserDataPath, absFilePath)
+	if err != nil || !userFolderFile.MatchString(filepath.ToSlash(rel)) {
+		return ctx.JSON(http.StatusNotFound, model.Result{Success: common_err.INSUFFICIENT_PERMISSIONS, Message: common_err.GetMsg(common_err.INSUFFICIENT_PERMISSIONS)})
+	}
 	if !file.Exists(absFilePath) {
 		return ctx.JSON(http.StatusNotFound, model.Result{Success: common_err.FILE_DOES_NOT_EXIST, Message: common_err.GetMsg(common_err.FILE_DOES_NOT_EXIST)})
 	}
-	if !strings.Contains(absFilePath, config.AppInfo.UserDataPath) {
-		return ctx.JSON(http.StatusNotFound, model.Result{Success: common_err.INSUFFICIENT_PERMISSIONS, Message: common_err.GetMsg(common_err.INSUFFICIENT_PERMISSIONS)})
-	}
-
-	matched, err := regexp.MatchString(`^/var/lib/casaos/\d`, absFilePath)
-	if err != nil {
-		return ctx.JSON(http.StatusNotFound, model.Result{Success: common_err.INSUFFICIENT_PERMISSIONS, Message: common_err.GetMsg(common_err.INSUFFICIENT_PERMISSIONS)})
-	}
-	if !matched {
-		return ctx.JSON(http.StatusNotFound, model.Result{Success: common_err.INSUFFICIENT_PERMISSIONS, Message: common_err.GetMsg(common_err.INSUFFICIENT_PERMISSIONS)})
+	// This route needs no sign-in (the sign-in page shows the avatar and its wallpaper),
+	// and the folder holds the dashboard's settings too: pictures only, by the two rules
+	// a picture gets in by, its name (an upload) or its content (one taken from Files).
+	if _, err := file.GetImageExtByName(strings.ToLower(absFilePath)); err != nil {
+		if _, err := file.GetImageExt(absFilePath); err != nil {
+			return ctx.JSON(http.StatusNotFound, model.Result{Success: common_err.INSUFFICIENT_PERMISSIONS, Message: common_err.GetMsg(common_err.INSUFFICIENT_PERMISSIONS)})
+		}
 	}
 
 	fileName := path.Base(absFilePath)
@@ -826,7 +890,9 @@ func GetUserStatus(ctx echo.Context) error {
 		data["key"] = ""
 	} else {
 		key := uuid.NewV4().String()
+		service.UserRegisterMu.Lock()
 		service.UserRegisterHash[key] = key
+		service.UserRegisterMu.Unlock()
 		data["key"] = key
 		data["initialized"] = false
 	}

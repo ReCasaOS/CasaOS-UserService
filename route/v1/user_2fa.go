@@ -59,7 +59,7 @@ func ok(ctx echo.Context, data interface{}) error {
 
 // PostUser2FAVerify exchanges the pre-auth token from /login plus a TOTP code
 // or a recovery code for the usual access and refresh tokens. Public route,
-// deliberately outside LoginLimiter: without a pre-auth token, which only a
+// deliberately outside the /login budget: without a pre-auth token, which only a
 // correct password on the limited /login mints, a request costs one signature
 // check and nothing else; with one, attempts are bounded by the per-user
 // budget and the token's five minutes. A global budget here would only let
