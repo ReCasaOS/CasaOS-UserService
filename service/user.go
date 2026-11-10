@@ -16,12 +16,14 @@ import (
 	"io"
 	"mime/multipart"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/ReCasaOS/CasaOS-Common/utils/jwt"
 	"github.com/ReCasaOS/CasaOS-Common/utils/logger"
 	"github.com/ReCasaOS/CasaOS-UserService/service/model"
+	gojwt "github.com/golang-jwt/jwt/v4"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -31,7 +33,10 @@ type UserService interface {
 	CreateUser(m model.UserDBModel) model.UserDBModel
 	GetUserCount() (userCount int64)
 	UpdateUser(m model.UserDBModel)
+	// UpdateUserPassword stores the hash and ends the sessions opened before (SessionVersion)
 	UpdateUserPassword(m model.UserDBModel) error
+	// RefreshToken makes a refresh token of the session the row is at; SessionOf reads it back
+	RefreshToken(m model.UserDBModel) (string, error)
 	GetUserInfoById(id string) (m model.UserDBModel)
 	GetUserAllInfoById(id string) (m model.UserDBModel)
 	GetUserAllInfoByName(userName string) (m model.UserDBModel)
@@ -40,7 +45,8 @@ type UserService interface {
 	GetUserInfoByUserName(userName string) (m model.UserDBModel)
 	GetAllUserName() (list []model.UserDBModel)
 	UpdateUserTOTP(m model.UserDBModel) error
-	// ResetUserCredentials writes the password and the four 2FA columns in one UPDATE: both, or neither
+	// ResetUserCredentials writes the password and the four 2FA columns, and ends the sessions
+	// opened before, in one transaction: all, or none
 	ResetUserCredentials(m model.UserDBModel) error
 	ReplacePasswordHash(id int, current, replacement string) bool
 	EnableUserTOTP(id int, secret string, step int64, hashes []string) bool
@@ -89,6 +95,9 @@ func (u *userService) GetAllUserName() (list []model.UserDBModel) {
 }
 
 func (u *userService) CreateUser(m model.UserDBModel) model.UserDBModel {
+	if m.SessionVersion == 0 {
+		m.SessionVersion = time.Now().UnixNano() // see the field: no token of an earlier account is of this one
+	}
 	u.db.Create(&m)
 	return m
 }
@@ -99,7 +108,8 @@ func (u *userService) GetUserCount() (userCount int64) {
 }
 
 func (u *userService) UpdateUser(m model.UserDBModel) {
-	u.db.Model(&m).Omit("password", "totp_secret", "totp_enabled", "totp_last_step", "recovery_codes").Updates(&m)
+	// session_version: a profile saved from a row read earlier must not bring ended sessions back
+	u.db.Model(&m).Omit("password", "totp_secret", "totp_enabled", "totp_last_step", "recovery_codes", "session_version").Updates(&m)
 }
 
 // UpdateUserTOTP writes the four 2FA columns, zero values included: Updates
@@ -193,11 +203,41 @@ func (u *userService) UseRecoveryCode(id int, code string) bool {
 }
 
 func (u *userService) ResetUserCredentials(m model.UserDBModel) error {
-	return u.db.Model(&m).Select("password", "totp_secret", "totp_enabled", "totp_last_step", "recovery_codes").Updates(&m).Error
+	// one transaction: the credentials and the end of the sessions opened with the old ones
+	return u.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&m).Select("password", "totp_secret", "totp_enabled", "totp_last_step", "recovery_codes").Updates(&m).Error; err != nil {
+			return err
+		}
+		return tx.Model(&m).Update("session_version", gorm.Expr("session_version + 1")).Error
+	})
 }
 
 func (u *userService) UpdateUserPassword(m model.UserDBModel) error {
-	return u.db.Model(&m).Update("password", m.Password).Error
+	return u.db.Model(&m).Updates(map[string]interface{}{
+		"password":        m.Password,
+		"session_version": gorm.Expr("session_version + 1"),
+	}).Error
+}
+
+// RefreshToken is Common's GetRefreshToken, with the session of the row in the token's ID (jti):
+// Common's claims have no field of their own for it, and every service reads them.
+func (u *userService) RefreshToken(m model.UserDBModel) (string, error) {
+	now := time.Now()
+	claims := jwt.Claims{Username: m.Username, ID: m.Id, RegisteredClaims: gojwt.RegisteredClaims{
+		ExpiresAt: gojwt.NewNumericDate(now.Add(7 * 24 * time.Hour)),
+		IssuedAt:  gojwt.NewNumericDate(now),
+		NotBefore: gojwt.NewNumericDate(now),
+		Issuer:    "refresh",
+		ID:        strconv.FormatInt(m.SessionVersion, 10),
+	}}
+	return gojwt.NewWithClaims(gojwt.SigningMethodES256, claims).SignedString(u.privateKey)
+}
+
+// SessionOf is the session a refresh token belongs to. A token made before sessions were
+// numbered says nothing, and is of the first: a box that updates keeps its sessions.
+func SessionOf(claims *jwt.Claims) int64 {
+	session, _ := strconv.ParseInt(claims.RegisteredClaims.ID, 10, 64)
+	return session
 }
 
 func (u *userService) GetUserAllInfoById(id string) (m model.UserDBModel) {

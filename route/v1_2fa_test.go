@@ -125,6 +125,13 @@ func wrongCode(t *testing.T, secret string) string {
 // budget spent on an id in one test is not inherited by the next.
 func newRig(t *testing.T) (service.UserService, client) {
 	t.Helper()
+	users, c, _ := newRigDB(t)
+	return users, c
+}
+
+// newRigDB is newRig, with the database for a test that needs a row as an older version left it.
+func newRigDB(t *testing.T) (service.UserService, client, *gorm.DB) {
+	t.Helper()
 	logger.LogInitConsoleOnly() // the handlers log; a test run on its own has no logger otherwise
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -141,7 +148,7 @@ func newRig(t *testing.T) (service.UserService, client) {
 	v1.ResetLoginLimiters()
 	v1.UserLimit = rate.Inf
 	v1.ResetUserLimiters()
-	return users, client{t: t, h: route.InitRouter()}
+	return users, client{t: t, h: route.InitRouter()}, db
 }
 
 // TestLimiterResetPerRig: a budget exhausted on user id 1 in one rig is not
