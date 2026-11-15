@@ -37,12 +37,27 @@ type UserDBModel struct {
 	// SessionVersion numbers the sessions of the account: a refresh token carries the number the
 	// row had when it was made, and is refused once the row has another. A password change adds
 	// one, which ends every session opened before it. A new account starts at the instant it is
-	// made (CreateUser), not at 0: the database gives the id of an account that is gone to the
-	// next one, and a token of the first must not be of the second's session. An account from
-	// before sessions were numbered is at 0, like its tokens, which say nothing.
+	// made (CreateUser), not at 0: a database of before the id counter may have given the id of an
+	// account that is gone to the next one, and a token of the first must not be of the second's
+	// session. An account from before sessions were numbered is at 0, like its tokens, which say nothing.
 	SessionVersion int64 `gorm:"default:0" json:"-"`
+
+	// Rights is a JSON array of module names (see service.ValidRights) a user may use beyond
+	// the open ones. Empty is none. Only the rights route writes it.
+	Rights string `gorm:"default:''" json:"-"`
 }
 
 func (p *UserDBModel) TableName() string {
 	return "o_users"
+}
+
+// UserIdCounter is the one row that holds the last account number given: the other services
+// know an account by its number only, so a number is never given twice.
+type UserIdCounter struct {
+	Id   int `gorm:"column:id;primary_key"`
+	Last int
+}
+
+func (p *UserIdCounter) TableName() string {
+	return "o_user_id_counter"
 }
