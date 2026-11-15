@@ -16,6 +16,7 @@ import (
 	"io"
 	"mime/multipart"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -38,12 +39,17 @@ type UserService interface {
 	// RefreshToken makes a refresh token of the session the row is at; SessionOf reads it back
 	RefreshToken(m model.UserDBModel) (string, error)
 	GetUserInfoById(id string) (m model.UserDBModel)
+	FindUserRole(id string) (m model.UserDBModel, err error)
 	GetUserAllInfoById(id string) (m model.UserDBModel)
 	GetUserAllInfoByName(userName string) (m model.UserDBModel)
-	DeleteUserById(id string)
-	DeleteAllUser()
+	DeleteUserById(id string) error
 	GetUserInfoByUserName(userName string) (m model.UserDBModel)
 	GetAllUserName() (list []model.UserDBModel)
+	// ListUsers is every account with what the owner's list shows, by id
+	ListUsers() (list []model.UserDBModel)
+	// NormaliseRoles makes every account of before roles the administrator it was
+	NormaliseRoles()
+	SetUserRights(id string, rights []string) error
 	UpdateUserTOTP(m model.UserDBModel) error
 	// ResetUserCredentials writes the password and the four 2FA columns, and ends the sessions
 	// opened before, in one transaction: all, or none
@@ -81,12 +87,8 @@ type userService struct {
 	db *gorm.DB
 }
 
-func (u *userService) DeleteAllUser() {
-	u.db.Where("1=1").Delete(&model.UserDBModel{})
-}
-
-func (u *userService) DeleteUserById(id string) {
-	u.db.Where("id= ?", id).Delete(&model.UserDBModel{})
+func (u *userService) DeleteUserById(id string) error {
+	return u.db.Where("id= ?", id).Delete(&model.UserDBModel{}).Error
 }
 
 func (u *userService) GetAllUserName() (list []model.UserDBModel) {
@@ -94,11 +96,68 @@ func (u *userService) GetAllUserName() (list []model.UserDBModel) {
 	return
 }
 
+func (u *userService) ListUsers() (list []model.UserDBModel) {
+	u.db.Select("id", "username", "role", "totp_enabled", "rights").Order("id").Find(&list)
+	return
+}
+
+// ValidRights are the names a right can have.
+var ValidRights = []string{"storage", "vm", "backups", "fleet", "system"}
+
+// ParseRights reads the stored column: the valid names it holds, each once, in the order of
+// ValidRights. Anything else, invalid JSON included, is no rights.
+func ParseRights(stored string) []string {
+	var names []string
+	_ = json.Unmarshal([]byte(stored), &names)
+	return NormaliseRights(names)
+}
+
+// NormaliseRights keeps the valid names, each once, in the order of ValidRights.
+func NormaliseRights(names []string) []string {
+	out := []string{}
+	for _, v := range ValidRights {
+		if slices.Contains(names, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// SetUserRights replaces the rights of a user account; the administrator's row is never written.
+func (u *userService) SetUserRights(id string, rights []string) error {
+	stored, _ := json.Marshal(NormaliseRights(rights))
+	return u.db.Model(&model.UserDBModel{}).Where("id = ? AND role <> ?", id, "admin").Update("rights", string(stored)).Error
+}
+
+func (u *userService) NormaliseRoles() {
+	u.db.Model(&model.UserDBModel{}).Where("role = '' OR role IS NULL").Update("role", "admin")
+}
+
 func (u *userService) CreateUser(m model.UserDBModel) model.UserDBModel {
 	if m.SessionVersion == 0 {
 		m.SessionVersion = time.Now().UnixNano() // see the field: no token of an earlier account is of this one
 	}
-	u.db.Create(&m)
+	// the next number is past the highest ever given (the counter) and past every row there
+	// (a database of before the counter); id 0 left on failure tells the caller
+	err := u.db.Transaction(func(tx *gorm.DB) error {
+		counter := model.UserIdCounter{Id: 1}
+		if err := tx.FirstOrCreate(&counter).Error; err != nil {
+			return err
+		}
+		var highest int
+		if err := tx.Model(&model.UserDBModel{}).Select("COALESCE(MAX(id), 0)").Scan(&highest).Error; err != nil {
+			return err
+		}
+		m.Id = max(highest, counter.Last) + 1
+		if err := tx.Create(&m).Error; err != nil {
+			return err
+		}
+		return tx.Model(&counter).Update("last", m.Id).Error
+	})
+	if err != nil {
+		logger.Error("could not create the account", zap.Error(err))
+		m.Id = 0
+	}
 	return m
 }
 
@@ -109,7 +168,7 @@ func (u *userService) GetUserCount() (userCount int64) {
 
 func (u *userService) UpdateUser(m model.UserDBModel) {
 	// session_version: a profile saved from a row read earlier must not bring ended sessions back
-	u.db.Model(&m).Omit("password", "totp_secret", "totp_enabled", "totp_last_step", "recovery_codes", "session_version").Updates(&m)
+	u.db.Model(&m).Omit("password", "totp_secret", "totp_enabled", "totp_last_step", "recovery_codes", "session_version", "rights").Updates(&m)
 }
 
 // UpdateUserTOTP writes the four 2FA columns, zero values included: Updates
@@ -251,7 +310,14 @@ func (u *userService) GetUserAllInfoByName(userName string) (m model.UserDBModel
 }
 
 func (u *userService) GetUserInfoById(id string) (m model.UserDBModel) {
-	u.db.Select("username", "id", "role", "nickname", "description", "avatar", "email", "totp_enabled").Where("id= ?", id).First(&m)
+	u.db.Select("username", "id", "role", "nickname", "description", "avatar", "email", "totp_enabled", "rights").Where("id= ?", id).First(&m)
+	return
+}
+
+// FindUserRole reads an account's id and role, with the error of the read:
+// gorm.ErrRecordNotFound when there is no such account.
+func (u *userService) FindUserRole(id string) (m model.UserDBModel, err error) {
+	err = u.db.Select("id", "role", "rights").Where("id= ?", id).First(&m).Error
 	return
 }
 
@@ -302,6 +368,9 @@ func NewUserService(db *gorm.DB, keyPath string) UserService {
 	if err != nil {
 		logger.Error("failed to generate key pair for pre-auth tokens", zap.Error(err))
 		return nil
+	}
+	if err := db.AutoMigrate(&model.UserIdCounter{}); err != nil {
+		logger.Error("could not create the account number table", zap.Error(err))
 	}
 
 	return &userService{

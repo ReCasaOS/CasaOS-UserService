@@ -54,7 +54,7 @@ func InitRouter() http.Handler {
 					_, publicKey := service.MyService.User().GetKeyPair()
 					return publicKey, nil
 				})
-			if err != nil || !valid {
+			if err != nil || !valid || !v1.TokenIsOfTheAccount(claims) {
 				return nil, echo.ErrUnauthorized
 			}
 
@@ -81,24 +81,29 @@ func InitRouter() http.Handler {
 		v1UsersGroup.POST("/2fa/enable", v1.PostUser2FAEnable)
 		v1UsersGroup.POST("/2fa/disable", v1.PostUser2FADisable)
 
+		// the routes that keep a body or a file read 10 MB at most
+		bodyLimit := echo_middleware.BodyLimit("10M")
 		v1UsersGroup.GET("/current/custom/:key", v1.GetUserCustomConf)
-		v1UsersGroup.POST("/current/custom/:key", v1.PostUserCustomConf)
+		v1UsersGroup.POST("/current/custom/:key", v1.PostUserCustomConf, bodyLimit)
 		v1UsersGroup.DELETE("/current/custom/:key", v1.DeleteUserCustomConf)
 
-		v1UsersGroup.POST("/current/image/:key", v1.PostUserUploadImage)
-		v1UsersGroup.PUT("/current/image/:key", v1.PutUserImage)
+		v1UsersGroup.POST("/current/image/:key", v1.PostUserUploadImage, bodyLimit)
+		v1UsersGroup.PUT("/current/image/:key", v1.PutUserImage, bodyLimit)
 		// v1UserGroup.POST("/file/image/:key", v1.PostUserFileImage)
 		v1UsersGroup.DELETE("/current/image", v1.DeleteUserImage)
 
-		v1UsersGroup.PUT("/login-style", v1.PutLoginStyle)
+		v1UsersGroup.PUT("/login-style", v1.PutLoginStyle, v1.RequireAdmin) // the login page of the whole box
 
-		v1UsersGroup.PUT("/avatar", v1.PutUserAvatar)
+		v1UsersGroup.PUT("/avatar", v1.PutUserAvatar, bodyLimit)
 		v1UsersGroup.GET("/avatar", v1.GetUserAvatar)
 
-		v1UsersGroup.DELETE("/:id", v1.DeleteUser)
-		v1UsersGroup.GET("/name", v1.GetUserAllUsername) // all/name; who has an account is not said without a sign-in
-		v1UsersGroup.GET("/:username", v1.GetUserInfoByUsername)
-		v1UsersGroup.DELETE("", v1.DeleteUserAll)
+		v1UsersGroup.POST("", v1.PostUser, v1.RequireAdmin)
+		v1UsersGroup.GET("", v1.GetUsers, v1.RequireAdmin)
+		v1UsersGroup.GET("/role/:id", v1.GetUserRole, v1.RequireInternal)
+		v1UsersGroup.PUT("/:id/rights", v1.PutUserRights, v1.RequireAdmin)
+		v1UsersGroup.DELETE("/:id", v1.DeleteUser, v1.RequireAdmin)
+		v1UsersGroup.GET("/name", v1.GetUserAllUsername, v1.RequireAdmin)
+		v1UsersGroup.GET("/:username", v1.GetUserInfoByUsername, v1.RequireAdmin)
 	}
 
 	return e

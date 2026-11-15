@@ -126,6 +126,7 @@ func init() {
 	}
 
 	service.MyService = service.NewService(sqliteDB, config.CommonInfo.RuntimePath)
+	service.MyService.User().NormaliseRoles()
 }
 
 func main() {

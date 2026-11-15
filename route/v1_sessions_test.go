@@ -139,8 +139,8 @@ func TestARefreshTokenOfAnAccountThatIsGoneDoesNotOpenTheNextOne(t *testing.T) {
 
 	users.DeleteUserById(strconv.Itoa(gone.Id))
 	next := users.CreateUser(model2.UserDBModel{Username: "owner", Password: encryption.HashPassword("battery staple"), Role: "admin"})
-	if next.Id != gone.Id {
-		t.Skipf("the next account got another number (%d after %d): nothing to tell apart", next.Id, gone.Id)
+	if next.Id == gone.Id {
+		t.Fatalf("a number was given twice (%d, %d)", next.Id, gone.Id)
 	}
 
 	if status, _ := refreshStatus(c, old); status != http.StatusUnauthorized {

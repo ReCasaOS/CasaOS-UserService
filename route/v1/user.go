@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"encoding/base64"
@@ -8,7 +9,6 @@ import (
 	"image"
 	"image/png"
 	"io"
-	"log"
 	"net/http"
 	url2 "net/url"
 	"os"
@@ -39,6 +39,36 @@ import (
 
 	"github.com/ReCasaOS/CasaOS-UserService/service"
 )
+
+// ownDir is the folder of an account: what an account route reads, copies or deletes is in it.
+func ownDir(id int) string { return config.AppInfo.UserDataPath + "/" + strconv.Itoa(id) }
+
+// within is true for a path under dir (not dir itself): cleaned, then checked with filepath.Rel,
+// with the links of what exists resolved so a link in the folder does not lead out.
+func within(dir, p string) bool {
+	if dir == "" || p == "" {
+		return false
+	}
+	dir, p = filepath.Clean(dir), filepath.Clean(p)
+	if !under(dir, p) {
+		return false
+	}
+	resolved := p
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		resolved = r
+	} else if r, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
+		resolved = filepath.Join(r, filepath.Base(p))
+	}
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	return under(dir, resolved)
+}
+
+func under(dir, p string) bool {
+	rel, err := filepath.Rel(dir, p)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
 
 // @Summary register user
 // @Router /user/register/ [post]
@@ -281,6 +311,8 @@ func issueTokens(ctx echo.Context, user model2.UserDBModel) error {
 // @Security ApiKeyAuth
 // @Success 200 {string} string "ok"
 // @Router /users/avatar [put]
+const maxAvatarPixels = 16 << 20
+
 func PutUserAvatar(ctx echo.Context) error {
 	id := ctx.Request().Header.Get("user_id")
 	user := service.MyService.User().GetUserInfoById(id)
@@ -295,27 +327,34 @@ func PutUserAvatar(ctx echo.Context) error {
 	imgBase64 := strings.Replace(data, "data:image/png;base64,", "", 1)
 	decodeData, err := base64.StdEncoding.DecodeString(string(imgBase64))
 	if err != nil {
-		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: err.Error()})
+		return ctx.JSON(http.StatusBadRequest, model.Result{Success: common_err.INVALID_PARAMS, Message: common_err.GetMsg(common_err.INVALID_PARAMS)})
 	}
 
-	// 将字节数组转为图片
-	img, _, err := image.Decode(strings.NewReader(string(decodeData)))
+	// the header first: a small file can declare billions of pixels
+	if c, _, err := image.DecodeConfig(bytes.NewReader(decodeData)); err != nil || int64(c.Width)*int64(c.Height) > maxAvatarPixels {
+		return ctx.JSON(http.StatusBadRequest, model.Result{Success: common_err.NOT_IMAGE, Message: common_err.GetMsg(common_err.NOT_IMAGE)})
+	}
+	img, _, err := image.Decode(bytes.NewReader(decodeData))
 	if err != nil {
-		log.Fatal(err)
+		return ctx.JSON(http.StatusBadRequest, model.Result{Success: common_err.NOT_IMAGE, Message: common_err.GetMsg(common_err.NOT_IMAGE)})
 	}
 
-	ext := ".png"
-	avatarPath := config.AppInfo.UserDataPath + "/" + id + "/avatar" + ext
+	avatarPath := ownDir(user.Id) + "/avatar.png"
+	if err := os.MkdirAll(ownDir(user.Id), 0o755); err != nil {
+		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: common_err.GetMsg(common_err.SERVICE_ERROR)})
+	}
 	os.Remove(avatarPath)
 	outFile, err := os.Create(avatarPath)
 	if err != nil {
 		logger.Error("create file error", zap.Error(err))
+		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: common_err.GetMsg(common_err.SERVICE_ERROR)})
 	}
 	defer outFile.Close()
 
 	err = png.Encode(outFile, img)
 	if err != nil {
 		logger.Error("encode error", zap.Error(err))
+		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: common_err.GetMsg(common_err.SERVICE_ERROR)})
 	}
 	user.Avatar = avatarPath
 	service.MyService.User().UpdateUser(user)
@@ -342,7 +381,7 @@ func GetUserAvatar(ctx echo.Context) error {
 			model.Result{Success: common_err.USER_NOT_EXIST, Message: common_err.GetMsg(common_err.USER_NOT_EXIST)})
 	}
 
-	if file.Exists(user.Avatar) {
+	if within(ownDir(user.Id), user.Avatar) && file.Exists(user.Avatar) {
 		ctx.Response().Header().Set("Content-Disposition", "attachment; filename*=utf-8''"+url2.PathEscape(path.Base(user.Avatar)))
 		ctx.Response().Header().Set("Cache-Control", "no-cache, no-store, max-age=0, must-revalidate, value")
 		return ctx.File(user.Avatar)
@@ -371,38 +410,43 @@ func GetUserAvatar(ctx echo.Context) error {
 // @Router /user/name/:id [put]
 func PutUserInfo(ctx echo.Context) error {
 	id := ctx.Request().Header.Get("user_id")
-	json := model2.UserDBModel{}
-	ctx.Bind(&json)
+	// the request names four fields; the rest of the row is not its to say
+	var body struct {
+		Username    string `json:"username"`
+		Nickname    string `json:"nickname"`
+		Description string `json:"description"`
+		Email       string `json:"email"`
+	}
+	ctx.Bind(&body)
+	// with PostUser: two requests for one name make one account
+	service.UserRegisterMu.Lock()
+	defer service.UserRegisterMu.Unlock()
 	user := service.MyService.User().GetUserInfoById(id)
 	if user.Id == 0 {
 		return ctx.JSON(common_err.SERVICE_ERROR,
 			model.Result{Success: common_err.USER_NOT_EXIST_OR_PWD_INVALID, Message: common_err.GetMsg(common_err.USER_NOT_EXIST_OR_PWD_INVALID)})
 	}
-	if len(json.Username) > 0 {
-		u := service.MyService.User().GetUserInfoByUserName(json.Username)
-		if u.Id > 0 {
+	if len(body.Username) > 0 && body.Username != user.Username {
+		if user.Role != "admin" { // a user's login name is the owner's to choose
+			return forbidden(ctx)
+		}
+		if u := service.MyService.User().GetUserInfoByUserName(body.Username); u.Id > 0 {
 			return ctx.JSON(common_err.CLIENT_ERROR,
 				model.Result{Success: common_err.USER_EXIST, Message: common_err.GetMsg(common_err.USER_EXIST)})
 		}
+		user.Username = body.Username
 	}
-
-	if len(json.Email) == 0 {
-		json.Email = user.Email
+	if len(body.Email) > 0 {
+		user.Email = body.Email
 	}
-	if len(json.Avatar) == 0 {
-		json.Avatar = user.Avatar
+	if len(body.Description) > 0 {
+		user.Description = body.Description
 	}
-	if len(json.Role) == 0 {
-		json.Role = user.Role
+	if len(body.Nickname) > 0 {
+		user.Nickname = body.Nickname
 	}
-	if len(json.Description) == 0 {
-		json.Description = user.Description
-	}
-	if len(json.Nickname) == 0 {
-		json.Nickname = user.Nickname
-	}
-	service.MyService.User().UpdateUser(json)
-	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: json})
+	service.MyService.User().UpdateUser(user)
+	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: user})
 }
 
 // @Summary edit user password
@@ -506,12 +550,20 @@ func PutUserDesc(ctx echo.Context) error {
 func GetUserInfo(ctx echo.Context) error {
 	id := ctx.Request().Header.Get("user_id")
 	user := service.MyService.User().GetUserInfoById(id)
+	// the caller's own rights only; the administrator passes by role, so none are listed
+	rights := []string{}
+	if user.Role != "admin" {
+		rights = service.ParseRights(user.Rights)
+	}
 
 	return ctx.JSON(common_err.SUCCESS,
 		model.Result{
 			Success: common_err.SUCCESS,
 			Message: common_err.GetMsg(common_err.SUCCESS),
-			Data:    user,
+			Data: struct {
+				model2.UserDBModel
+				Rights []string `json:"rights"`
+			}{user, rights},
 		})
 }
 
@@ -579,7 +631,10 @@ func GetUserCustomConf(ctx echo.Context) error {
 		return ctx.JSON(common_err.SERVICE_ERROR,
 			model.Result{Success: common_err.USER_NOT_EXIST, Message: common_err.GetMsg(common_err.USER_NOT_EXIST)})
 	}
-	filePath := config.AppInfo.UserDataPath + "/" + id + "/" + name + ".json"
+	filePath := ownDir(user.Id) + "/" + name + ".json"
+	if !within(ownDir(user.Id), filePath) {
+		return forbidden(ctx)
+	}
 
 	data := file.ReadFullFile(filePath)
 	if !gjson.ValidBytes(data) {
@@ -605,8 +660,14 @@ func PostUserCustomConf(ctx echo.Context) error {
 		return ctx.JSON(common_err.SERVICE_ERROR,
 			model.Result{Success: common_err.USER_NOT_EXIST, Message: common_err.GetMsg(common_err.USER_NOT_EXIST)})
 	}
-	data, _ := io.ReadAll(ctx.Request().Body)
-	filePath := config.AppInfo.UserDataPath + "/" + strconv.Itoa(user.Id)
+	if !within(ownDir(user.Id), ownDir(user.Id)+"/"+name+".json") {
+		return forbidden(ctx)
+	}
+	data, err := io.ReadAll(ctx.Request().Body)
+	if err != nil { // past the route's limit (BodyLimit) or cut: nothing is written
+		return ctx.JSON(http.StatusRequestEntityTooLarge, model.Result{Success: common_err.CLIENT_ERROR, Message: err.Error()})
+	}
+	filePath := ownDir(user.Id)
 
 	if err := file.IsNotExistMkDir(filePath); err != nil {
 		return ctx.JSON(common_err.SERVICE_ERROR,
@@ -651,24 +712,15 @@ func DeleteUserCustomConf(ctx echo.Context) error {
 		return ctx.JSON(common_err.SERVICE_ERROR,
 			model.Result{Success: common_err.USER_NOT_EXIST, Message: common_err.GetMsg(common_err.USER_NOT_EXIST)})
 	}
-	filePath := config.AppInfo.UserDataPath + "/" + strconv.Itoa(user.Id) + "/" + name + ".json"
+	filePath := ownDir(user.Id) + "/" + name + ".json"
+	if !within(ownDir(user.Id), filePath) {
+		return forbidden(ctx)
+	}
 	err := os.Remove(filePath)
 	if err != nil {
 		return ctx.JSON(common_err.SERVICE_ERROR, model.Result{Success: common_err.SERVICE_ERROR, Message: common_err.GetMsg(common_err.SERVICE_ERROR)})
 	}
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS)})
-}
-
-/**
- * @description:
- * @param {path} id string "user id"
- * @method:DELETE
- * @router:/user/delete/:id
- */
-func DeleteUser(ctx echo.Context) error {
-	id := ctx.Param("id")
-	service.MyService.User().DeleteUserById(id)
-	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: id})
 }
 
 /**
@@ -679,12 +731,23 @@ func DeleteUser(ctx echo.Context) error {
 func PutUserImage(ctx echo.Context) error {
 	id := ctx.Request().Header.Get("user_id")
 	json := make(map[string]string)
-	ctx.Bind(&json)
+	if err := ctx.Bind(&json); err != nil { // past the route's limit (BodyLimit) or not JSON
+		return ctx.JSON(http.StatusBadRequest, model.Result{Success: common_err.INVALID_PARAMS, Message: common_err.GetMsg(common_err.INVALID_PARAMS)})
+	}
 
 	path := json["path"]
 	key := ctx.Param("key")
 	if len(path) == 0 || len(key) == 0 {
 		return ctx.JSON(http.StatusOK, model.Result{Success: common_err.INVALID_PARAMS, Message: common_err.GetMsg(common_err.INVALID_PARAMS)})
+	}
+	user := service.MyService.User().GetUserInfoById(id)
+	if user.Id == 0 {
+		return ctx.JSON(http.StatusOK, model.Result{Success: common_err.USER_NOT_EXIST, Message: common_err.GetMsg(common_err.USER_NOT_EXIST)})
+	}
+	ext := file.GetExt(path)
+	filePath := ownDir(user.Id) + "/" + key + ext
+	if !within(ownDir(user.Id), path) || !within(ownDir(user.Id), filePath) {
+		return forbidden(ctx)
 	}
 	if !file.Exists(path) {
 		return ctx.JSON(http.StatusOK, model.Result{Success: common_err.FILE_DOES_NOT_EXIST, Message: common_err.GetMsg(common_err.FILE_DOES_NOT_EXIST)})
@@ -695,16 +758,10 @@ func PutUserImage(ctx echo.Context) error {
 		return ctx.JSON(http.StatusOK, model.Result{Success: common_err.NOT_IMAGE, Message: common_err.GetMsg(common_err.NOT_IMAGE)})
 	}
 
-	user := service.MyService.User().GetUserInfoById(id)
-	if user.Id == 0 {
-		return ctx.JSON(http.StatusOK, model.Result{Success: common_err.USER_NOT_EXIST, Message: common_err.GetMsg(common_err.USER_NOT_EXIST)})
-	}
-	fstat, _ := os.Stat(path)
-	if fstat.Size() > 10<<20 {
+	fstat, err := os.Stat(path)
+	if err != nil || fstat.Size() > 10<<20 {
 		return ctx.JSON(http.StatusOK, model.Result{Success: common_err.IMAGE_TOO_LARGE, Message: common_err.GetMsg(common_err.IMAGE_TOO_LARGE)})
 	}
-	ext := file.GetExt(path)
-	filePath := config.AppInfo.UserDataPath + "/" + strconv.Itoa(user.Id) + "/" + key + ext
 	file.CopySingleFile(path, filePath, "overwrite")
 
 	data := make(map[string]string, 3)
@@ -749,9 +806,14 @@ func PostUserUploadImage(ctx echo.Context) error {
 	if t == "avatar" {
 		key = "avatar"
 	}
-	path := config.AppInfo.UserDataPath + "/" + strconv.Itoa(user.Id) + "/" + key + ext
+	path := ownDir(user.Id) + "/" + key + ext
+	if !within(ownDir(user.Id), path) {
+		return forbidden(ctx)
+	}
 
-	file.SaveUploadedFile(f, path)
+	if err := file.SaveUploadedFile(f, path); err != nil {
+		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: common_err.GetMsg(common_err.SERVICE_ERROR)})
+	}
 
 	data := make(map[string]string, 3)
 	data["path"] = path
@@ -780,7 +842,8 @@ func GetUserImage(ctx echo.Context) error {
 	// A user's folder is <UserDataPath>/<id>, and what is asked for is in one. Checked
 	// before the disk is looked at: the answer does not say what exists elsewhere.
 	rel, err := filepath.Rel(config.AppInfo.UserDataPath, absFilePath)
-	if err != nil || !userFolderFile.MatchString(filepath.ToSlash(rel)) {
+	if err != nil || !userFolderFile.MatchString(filepath.ToSlash(rel)) ||
+		!within(filepath.Join(config.AppInfo.UserDataPath, strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]), absFilePath) {
 		return ctx.JSON(http.StatusNotFound, model.Result{Success: common_err.INSUFFICIENT_PERMISSIONS, Message: common_err.GetMsg(common_err.INSUFFICIENT_PERMISSIONS)})
 	}
 	if !file.Exists(absFilePath) {
@@ -812,11 +875,11 @@ func DeleteUserImage(ctx echo.Context) error {
 	if user.Id == 0 {
 		return ctx.JSON(common_err.SERVICE_ERROR, model.Result{Success: common_err.USER_NOT_EXIST, Message: common_err.GetMsg(common_err.USER_NOT_EXIST)})
 	}
+	if !within(ownDir(user.Id), path) {
+		return forbidden(ctx)
+	}
 	if !file.Exists(path) {
 		return ctx.JSON(common_err.SERVICE_ERROR, model.Result{Success: common_err.FILE_DOES_NOT_EXIST, Message: common_err.GetMsg(common_err.FILE_DOES_NOT_EXIST)})
-	}
-	if !strings.Contains(path, config.AppInfo.UserDataPath+"/"+strconv.Itoa(user.Id)) {
-		return ctx.JSON(common_err.SERVICE_ERROR, model.Result{Success: common_err.INSUFFICIENT_PERMISSIONS, Message: common_err.GetMsg(common_err.INSUFFICIENT_PERMISSIONS)})
 	}
 	os.Remove(path)
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS)})
@@ -862,11 +925,6 @@ func PostUserRefreshToken(ctx echo.Context) error {
 	}
 
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: verifyInfo})
-}
-
-func DeleteUserAll(ctx echo.Context) error {
-	service.MyService.User().DeleteAllUser()
-	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS)})
 }
 
 // @Summary 检查是否进入引导状态

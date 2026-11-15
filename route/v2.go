@@ -11,6 +11,7 @@ import (
 	"github.com/ReCasaOS/CasaOS-Common/utils/jwt"
 	codegen "github.com/ReCasaOS/CasaOS-UserService/codegen/user_service"
 	"github.com/ReCasaOS/CasaOS-UserService/pkg/config"
+	v1 "github.com/ReCasaOS/CasaOS-UserService/route/v1"
 	v2 "github.com/ReCasaOS/CasaOS-UserService/route/v2"
 	"github.com/ReCasaOS/CasaOS-UserService/service"
 	"github.com/deepmap/oapi-codegen/pkg/middleware"
@@ -74,7 +75,7 @@ func InitV2Router() http.Handler {
 					_, publicKey := service.MyService.User().GetKeyPair()
 					return publicKey, nil
 				})
-			if err != nil || !valid {
+			if err != nil || !valid || !v1.TokenIsOfTheAccount(claims) {
 				return nil, echo.ErrUnauthorized
 			}
 
