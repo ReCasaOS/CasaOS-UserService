@@ -45,6 +45,11 @@ type UserDBModel struct {
 	// Rights is a JSON array of module names (see service.ValidRights) a user may use beyond
 	// the open ones. Empty is none. Only the rights route writes it.
 	Rights string `gorm:"default:''" json:"-"`
+
+	// Folders is a JSON array of the folders of Files a user may reach, each to read or to
+	// read and write (see service.Folder). Empty is none: Files is closed to the account.
+	// Only the folders route writes it.
+	Folders string `gorm:"default:''" json:"-"`
 }
 
 func (p *UserDBModel) TableName() string {

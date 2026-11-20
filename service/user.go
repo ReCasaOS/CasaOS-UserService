@@ -13,6 +13,8 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"errors"
+	"path"
+	"strings"
 	"io"
 	"mime/multipart"
 	"os"
@@ -50,6 +52,7 @@ type UserService interface {
 	// NormaliseRoles makes every account of before roles the administrator it was
 	NormaliseRoles()
 	SetUserRights(id string, rights []string) error
+	SetUserFolders(id string, folders []Folder) error
 	UpdateUserTOTP(m model.UserDBModel) error
 	// ResetUserCredentials writes the password and the four 2FA columns, and ends the sessions
 	// opened before, in one transaction: all, or none
@@ -97,7 +100,7 @@ func (u *userService) GetAllUserName() (list []model.UserDBModel) {
 }
 
 func (u *userService) ListUsers() (list []model.UserDBModel) {
-	u.db.Select("id", "username", "role", "totp_enabled", "rights").Order("id").Find(&list)
+	u.db.Select("id", "username", "role", "totp_enabled", "rights", "folders").Order("id").Find(&list)
 	return
 }
 
@@ -127,6 +130,63 @@ func NormaliseRights(names []string) []string {
 func (u *userService) SetUserRights(id string, rights []string) error {
 	stored, _ := json.Marshal(NormaliseRights(rights))
 	return u.db.Model(&model.UserDBModel{}).Where("id = ? AND role <> ?", id, "admin").Update("rights", string(stored)).Error
+}
+
+// Folder is a folder of Files given to a user account, to read, or to read and write.
+type Folder struct {
+	Path  string `json:"path"`
+	Write bool   `json:"write"`
+}
+
+// FoldersMax is how many folders one account can be given.
+const FoldersMax = 32
+
+// ErrBadFolders is a list of folders that cannot be given as it is.
+var ErrBadFolders = errors.New("folders: each an absolute path spelled once, not /, none inside another, at most 32")
+
+// CheckFolders is the list as it is stored, or ErrBadFolders: every path absolute and spelled
+// once (no `.`, `..`, `//` nor trailing slash), not `/`, each path once, none inside another
+// of the list (one folder, one mode: no doubt which applies), at most FoldersMax. Whether a
+// path is a folder of the box the core judges, when it is reached.
+func CheckFolders(folders []Folder) ([]Folder, error) {
+	if len(folders) > FoldersMax {
+		return nil, ErrBadFolders
+	}
+	out := []Folder{}
+	for _, f := range folders {
+		p := f.Path
+		if p == "" || p[0] != '/' || p == "/" || path.Clean(p) != p || strings.ContainsRune(p, 0) {
+			return nil, ErrBadFolders
+		}
+		for _, other := range out {
+			if other.Path == p || strings.HasPrefix(p, other.Path+"/") || strings.HasPrefix(other.Path, p+"/") {
+				return nil, ErrBadFolders
+			}
+		}
+		out = append(out, Folder{Path: p, Write: f.Write})
+	}
+	return out, nil
+}
+
+// ParseFolders reads the stored column; anything that does not pass CheckFolders, invalid
+// JSON included, is no folder.
+func ParseFolders(stored string) []Folder {
+	var folders []Folder
+	if json.Unmarshal([]byte(stored), &folders) != nil {
+		return []Folder{}
+	}
+	out, err := CheckFolders(folders)
+	if err != nil {
+		return []Folder{}
+	}
+	return out
+}
+
+// SetUserFolders replaces the folders of a user account; the administrator's row is never
+// written. The list is checked by the caller.
+func (u *userService) SetUserFolders(id string, folders []Folder) error {
+	stored, _ := json.Marshal(folders)
+	return u.db.Model(&model.UserDBModel{}).Where("id = ? AND role <> ?", id, "admin").Update("folders", string(stored)).Error
 }
 
 func (u *userService) NormaliseRoles() {
@@ -168,7 +228,7 @@ func (u *userService) GetUserCount() (userCount int64) {
 
 func (u *userService) UpdateUser(m model.UserDBModel) {
 	// session_version: a profile saved from a row read earlier must not bring ended sessions back
-	u.db.Model(&m).Omit("password", "totp_secret", "totp_enabled", "totp_last_step", "recovery_codes", "session_version", "rights").Updates(&m)
+	u.db.Model(&m).Omit("password", "totp_secret", "totp_enabled", "totp_last_step", "recovery_codes", "session_version", "rights", "folders").Updates(&m)
 }
 
 // UpdateUserTOTP writes the four 2FA columns, zero values included: Updates
@@ -310,14 +370,14 @@ func (u *userService) GetUserAllInfoByName(userName string) (m model.UserDBModel
 }
 
 func (u *userService) GetUserInfoById(id string) (m model.UserDBModel) {
-	u.db.Select("username", "id", "role", "nickname", "description", "avatar", "email", "totp_enabled", "rights").Where("id= ?", id).First(&m)
+	u.db.Select("username", "id", "role", "nickname", "description", "avatar", "email", "totp_enabled", "rights", "folders").Where("id= ?", id).First(&m)
 	return
 }
 
 // FindUserRole reads an account's id and role, with the error of the read:
 // gorm.ErrRecordNotFound when there is no such account.
 func (u *userService) FindUserRole(id string) (m model.UserDBModel, err error) {
-	err = u.db.Select("id", "role", "rights").Where("id= ?", id).First(&m).Error
+	err = u.db.Select("id", "role", "rights", "folders").Where("id= ?", id).First(&m).Error
 	return
 }
 

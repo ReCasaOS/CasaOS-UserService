@@ -551,9 +551,9 @@ func GetUserInfo(ctx echo.Context) error {
 	id := ctx.Request().Header.Get("user_id")
 	user := service.MyService.User().GetUserInfoById(id)
 	// the caller's own rights only; the administrator passes by role, so none are listed
-	rights := []string{}
+	rights, folders := []string{}, []service.Folder{}
 	if user.Role != "admin" {
-		rights = service.ParseRights(user.Rights)
+		rights, folders = service.ParseRights(user.Rights), service.ParseFolders(user.Folders)
 	}
 
 	return ctx.JSON(common_err.SUCCESS,
@@ -562,8 +562,9 @@ func GetUserInfo(ctx echo.Context) error {
 			Message: common_err.GetMsg(common_err.SUCCESS),
 			Data: struct {
 				model2.UserDBModel
-				Rights []string `json:"rights"`
-			}{user, rights},
+				Rights  []string         `json:"rights"`
+				Folders []service.Folder `json:"folders"`
+			}{user, rights, folders},
 		})
 }
 

@@ -116,11 +116,12 @@ func GetUsers(ctx echo.Context) error {
 		Username    string   `json:"username"`
 		Role        string   `json:"role"`
 		TotpEnabled bool     `json:"totp_enabled"`
-		Rights      []string `json:"rights"`
+		Rights      []string         `json:"rights"`
+		Folders     []service.Folder `json:"folders"`
 	}
 	rows := []row{}
 	for _, u := range service.MyService.User().ListUsers() {
-		rows = append(rows, row{u.Id, u.Username, u.Role, u.TotpEnabled, service.ParseRights(u.Rights)})
+		rows = append(rows, row{u.Id, u.Username, u.Role, u.TotpEnabled, service.ParseRights(u.Rights), service.ParseFolders(u.Folders)})
 	}
 
 	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: rows})
@@ -146,14 +147,50 @@ func GetUserRole(ctx echo.Context) error {
 
 	// data stays the role string, as the services already built read it; rights is its sibling,
 	// empty for the administrator, who passes everything by role
-	rights := []string{}
+	rights, folders := []string{}, []service.Folder{}
 	if role == "user" {
-		rights = service.ParseRights(user.Rights)
+		rights, folders = service.ParseRights(user.Rights), service.ParseFolders(user.Folders)
 	}
 	return ctx.JSON(common_err.SUCCESS, struct {
 		model.Result
-		Rights []string `json:"rights"`
-	}{model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: role}, rights})
+		Rights  []string         `json:"rights"`
+		Folders []service.Folder `json:"folders"`
+	}{model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: role}, rights, folders})
+}
+
+// PutUserFolders sets the folders of Files a user account may reach. A list that does not
+// pass CheckFolders refuses the whole request; the administrator's are not settable (it
+// reaches everything).
+func PutUserFolders(ctx echo.Context) error {
+	id := ctx.Param("id")
+	if _, err := strconv.Atoi(id); err != nil {
+		return ctx.JSON(http.StatusNotFound, model.Result{Success: common_err.USER_NOT_EXIST, Message: common_err.GetMsg(common_err.USER_NOT_EXIST)})
+	}
+	var body struct {
+		Folders *[]service.Folder `json:"folders"`
+	}
+	// no "folders" key (or null) is not a request to clear them: {"folders":[]} is
+	if err := ctx.Bind(&body); err != nil || body.Folders == nil {
+		return invalidParams(ctx)
+	}
+	folders, err := service.CheckFolders(*body.Folders)
+	if err != nil {
+		return invalidParams(ctx)
+	}
+	service.UserRegisterMu.Lock()
+	defer service.UserRegisterMu.Unlock()
+	target := service.MyService.User().GetUserAllInfoById(id)
+	if target.Id == 0 {
+		return ctx.JSON(http.StatusNotFound, model.Result{Success: common_err.USER_NOT_EXIST, Message: common_err.GetMsg(common_err.USER_NOT_EXIST)})
+	}
+	if target.Role == "admin" {
+		return invalidParams(ctx)
+	}
+	if err := service.MyService.User().SetUserFolders(id, folders); err != nil {
+		return ctx.JSON(http.StatusInternalServerError, model.Result{Success: common_err.SERVICE_ERROR, Message: common_err.GetMsg(common_err.SERVICE_ERROR)})
+	}
+
+	return ctx.JSON(common_err.SUCCESS, model.Result{Success: common_err.SUCCESS, Message: common_err.GetMsg(common_err.SUCCESS), Data: folders})
 }
 
 // PutUserRights sets the rights of a user account: the names asked for, each once. An unknown

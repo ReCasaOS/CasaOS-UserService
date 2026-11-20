@@ -101,6 +101,7 @@ func InitRouter() http.Handler {
 		v1UsersGroup.GET("", v1.GetUsers, v1.RequireAdmin)
 		v1UsersGroup.GET("/role/:id", v1.GetUserRole, v1.RequireInternal)
 		v1UsersGroup.PUT("/:id/rights", v1.PutUserRights, v1.RequireAdmin)
+		v1UsersGroup.PUT("/:id/folders", v1.PutUserFolders, v1.RequireAdmin)
 		v1UsersGroup.DELETE("/:id", v1.DeleteUser, v1.RequireAdmin)
 		v1UsersGroup.GET("/name", v1.GetUserAllUsername, v1.RequireAdmin)
 		v1UsersGroup.GET("/:username", v1.GetUserInfoByUsername, v1.RequireAdmin)
