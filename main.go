@@ -39,9 +39,6 @@ var (
 	commit = "private build"
 	date   = "private build"
 
-	//go:embed api/index.html
-	_docHTML string
-
 	//go:embed api/user-service/openapi.yaml
 	_docYAML string
 
@@ -132,7 +129,7 @@ func init() {
 func main() {
 	v1Router := route.InitRouter()
 	v2Router := route.InitV2Router()
-	v2DocRouter := route.InitV2DocRouter(_docHTML, _docYAML)
+	v2DocRouter := route.InitV2DocRouter(_docYAML)
 
 	_, publicKey := service.MyService.User().GetKeyPair()
 
